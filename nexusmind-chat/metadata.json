@@ -1,0 +1,5 @@
+{
+  "name": "NexusMind Chat",
+  "description": "A recursive, branching chat application that allows users to delve into separate topics from any message, visualizing conversations as a navigable mind map.",
+  "requestFramePermissions": []
+}

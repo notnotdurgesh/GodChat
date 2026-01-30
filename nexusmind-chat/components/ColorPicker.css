@@ -1,0 +1,80 @@
+/* Custom styles for react-colorful */
+.react-colorful {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+  cursor: default;
+}
+
+.react-colorful__saturation {
+  position: relative;
+  flex-grow: 1;
+  border-radius: 8px 8px 0 0;
+  border-bottom: 0px solid #000;
+  background-image: linear-gradient(to top, #000, rgba(0, 0, 0, 0)),
+    linear-gradient(to right, #fff, rgba(255, 255, 255, 0));
+}
+
+.react-colorful__hue {
+  position: relative;
+  height: 16px;
+  margin-top: 12px;
+  border-radius: 8px;
+  background: linear-gradient(
+    to right,
+    #f00 0%,
+    #ff0 17%,
+    #0f0 33%,
+    #0ff 50%,
+    #00f 67%,
+    #f0f 83%,
+    #f00 100%
+  );
+}
+
+.react-colorful__interactive {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: inherit;
+  outline: none;
+  /* Don't disable touch-action globally or dragging fails? standard is touch-action: none */
+  touch-action: none; 
+}
+
+/* Pointer Styles - Premium Look */
+.react-colorful__pointer {
+  position: absolute;
+  z-index: 1;
+  box-sizing: border-box;
+  width: 20px; 
+  height: 20px;
+  transform: translate(-50%, -50%);
+  background-color: transparent;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2), 0 2px 4px rgba(0,0,0,0.2);
+  transition: transform 0.1s;
+}
+
+.react-colorful__interactive:active .react-colorful__pointer {
+    transform: translate(-50%, -50%) scale(1.1);
+}
+
+/* Hue Pointer Specifics */
+.react-colorful__hue .react-colorful__pointer {
+   width: 18px;
+   height: 18px;
+   background-color: #fff;
+   box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+   border: none;
+   margin-top: 0; /* Centered by react-colorful logic usually? */
+   /* Actually react-colorful positions top/left % based on value. */
+   /* Hue is usually horizontal, so left % varies. Top is 50%. */
+   top: 50%;
+}
