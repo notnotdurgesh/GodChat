@@ -1,4 +1,4 @@
-export const MERMAID_MCP_URL = 'http://localhost:4000';
+export const MERMAID_MCP_URL = process.env.MERMAID_MCP_URL;
 
 export const mermaidToolsApi = {
     get_syntax_docs: async (args: { file: string }) => {

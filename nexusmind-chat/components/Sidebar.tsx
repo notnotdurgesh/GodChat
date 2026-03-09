@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { ChatSession, SessionFolder } from '../types';
-import { Plus, MessageSquare, Trash2, Settings, FolderPlus, MoreHorizontal, ChevronDown, CheckSquare, Folder, Edit2, Palette, X } from 'lucide-react';
+import { Plus, MessageSquare, Trash2, Settings, FolderPlus, MoreHorizontal, ChevronDown, CheckSquare, Folder, Edit2, Palette, X, Import, Loader2, AlertTriangle } from 'lucide-react';
 import ColorPicker from './ColorPicker';
 
 interface SidebarProps {
@@ -16,6 +16,8 @@ interface SidebarProps {
   onDeleteFolder: (id: string) => void;
   onUpdateFolder: (id: string, updates: Partial<SessionFolder>) => void;
   onOpenSettings: (rect?: DOMRect) => void;
+  onOpenImport: () => void;
+  streamingSessionIds?: Set<string>;
 }
 
 const areSidebarPropsEqual = (prev: SidebarProps, next: SidebarProps) => {
@@ -50,6 +52,14 @@ const areSidebarPropsEqual = (prev: SidebarProps, next: SidebarProps) => {
     if (prev.folders[key] !== next.folders[key]) return false;
   }
 
+  // Compare streaming session IDs
+  const prevStreaming = prev.streamingSessionIds || new Set();
+  const nextStreaming = next.streamingSessionIds || new Set();
+  if (prevStreaming.size !== nextStreaming.size) return false;
+  for (const id of nextStreaming) {
+    if (!prevStreaming.has(id)) return false;
+  }
+
   return true;
 };
 
@@ -64,7 +74,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   onCreateFolder,
   onDeleteFolder,
   onUpdateFolder,
-  onOpenSettings
+  onOpenSettings,
+  onOpenImport,
+  streamingSessionIds = new Set()
 }) => {
   // --- State ---
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -89,6 +101,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   // Sorting - Use order if available, else date
   const sortedSessions = (Object.values(sessions) as ChatSession[]).sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || b.updatedAt - a.updatedAt);
   const sortedFolders = (Object.values(folders) as SessionFolder[]).sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || b.createdAt - a.createdAt);
+
+  // Folder delete confirmation state
+  const [folderDeleteConfirm, setFolderDeleteConfirm] = useState<{ id: string; name: string; chatCount: number } | null>(null);
 
   const sessionsInFolders = sortedSessions.filter(s => s.folderId);
   const unorganisedSessions = sortedSessions.filter(s => !s.folderId);
@@ -408,6 +423,11 @@ const Sidebar: React.FC<SidebarProps> = ({
           )}
         </div>
 
+        {/* Streaming indicator */}
+        {streamingSessionIds.has(session.id) && (
+          <Loader2 size={14} className="animate-spin text-accent-primary shrink-0" />
+        )}
+
         {/* Hover Grip/Menu Hint - Clickable for Mobile/Desktop */}
         <button
           className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity p-1 -mr-1 rounded-md hover:bg-black/5 dark:hover:bg-white/5 text-text-secondary/50 hover:text-text-primary"
@@ -608,13 +628,20 @@ const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Settings Footer */}
-      <div className="p-3 border-t border-border mt-auto z-10">
+      <div className="p-3 border-t border-border mt-auto z-10 flex gap-2">
         <button
           onClick={(e) => onOpenSettings(e.currentTarget.getBoundingClientRect())}
-          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-black/5 dark:hover:bg-white/5 transition-all"
+          className="flex-1 flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-black/5 dark:hover:bg-white/5 transition-all border border-transparent hover:border-border"
         >
           <Settings size={16} />
           <span>Settings</span>
+        </button>
+        <button
+          onClick={onOpenImport}
+          className="p-2.5 rounded-xl border border-border bg-surface hover:bg-black/5 dark:hover:bg-white/5 text-accent-primary transition-all active:scale-95 hover:border-accent-primary/30"
+          title="Import Chat"
+        >
+          <Import size={18} />
         </button>
       </div>
 
@@ -628,9 +655,13 @@ const Sidebar: React.FC<SidebarProps> = ({
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={e => e.stopPropagation()}
         >
-          <div className="px-3 py-1.5 text-[10px] font-bold text-text-secondary uppercase border-b border-border/50 mb-1 truncate">
-            {getTargetName()}
-          </div>
+          <button onClick={() => {
+            setIsMultiSelectMode(true);
+            toggleSelection(contextMenu.id);
+            closeMenus();
+          }} className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-black/5 dark:hover:bg-white/5 text-text-secondary text-left">
+            <CheckSquare size={12} /> Select...
+          </button>
 
           <button onClick={() => {
             setRenamingId(contextMenu.id);
@@ -681,22 +712,70 @@ const Sidebar: React.FC<SidebarProps> = ({
 
           <button
             onClick={() => {
-              if (contextMenu.type === 'session') onDeleteSession(contextMenu.id);
-              else onDeleteFolder(contextMenu.id);
+              if (contextMenu.type === 'session') {
+                onDeleteSession(contextMenu.id);
+              } else {
+                // For folders, show confirmation dialog
+                const chatCount = Object.values(sessions).filter(s => s.folderId === contextMenu.id).length;
+                setFolderDeleteConfirm({
+                  id: contextMenu.id,
+                  name: folders[contextMenu.id]?.name || 'Folder',
+                  chatCount
+                });
+              }
               closeMenus();
             }}
             className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-red-500/10 text-red-500 text-left"
           >
             <Trash2 size={12} /> Delete
           </button>
+        </div>,
+        document.body
+      )}
 
-          <button onClick={() => {
-            setIsMultiSelectMode(true);
-            toggleSelection(contextMenu.id);
-            closeMenus();
-          }} className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-black/5 dark:hover:bg-white/5 text-text-secondary text-left border-t border-border/50 mt-1">
-            <CheckSquare size={12} /> Select...
-          </button>
+      {/* Folder Delete Confirmation (Portal) */}
+      {folderDeleteConfirm && createPortal(
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
+          <div
+            className="bg-surface border border-border rounded-2xl shadow-2xl w-[340px] p-5 space-y-4 animate-in zoom-in-95 fade-in duration-200"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-red-500/10 flex items-center justify-center text-red-500 shrink-0">
+                <AlertTriangle size={20} />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-text-primary">Delete folder?</h3>
+                <p className="text-xs text-text-secondary mt-0.5">This cannot be undone.</p>
+              </div>
+            </div>
+
+            {folderDeleteConfirm.chatCount > 0 && (
+              <div className="bg-red-500/5 border border-red-500/20 rounded-xl px-3 py-2.5">
+                <p className="text-xs text-red-600 dark:text-red-400 font-medium">
+                  ⚠️ {folderDeleteConfirm.chatCount} chat{folderDeleteConfirm.chatCount > 1 ? 's' : ''} inside "{folderDeleteConfirm.name}" will also be permanently deleted.
+                </p>
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => setFolderDeleteConfirm(null)}
+                className="flex-1 px-4 py-2.5 rounded-xl text-xs font-medium border border-border text-text-primary hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  onDeleteFolder(folderDeleteConfirm.id);
+                  setFolderDeleteConfirm(null);
+                }}
+                className="flex-1 px-4 py-2.5 rounded-xl text-xs font-bold bg-red-500 text-white hover:bg-red-600 transition-colors shadow-sm"
+              >
+                Delete All
+              </button>
+            </div>
+          </div>
         </div>,
         document.body
       )}

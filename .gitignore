@@ -1,0 +1,50 @@
+# Dependency directories
+node_modules/
+**/node_modules/
+
+# Build outputs
+dist/
+dist-ssr/
+build/
+out/
+.next/
+.turbo/
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.local
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-workspace
+*.sublime-project
+
+# OS Metadata
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# TypeScript
+*.tsbuildinfo
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Testing
+.vscode-test/

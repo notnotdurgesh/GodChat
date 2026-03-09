@@ -339,10 +339,23 @@ const GraphView: React.FC<GraphViewProps> = ({
       const linksUpdate = linksEnter.merge(links as any);
 
       linksUpdate.transition().duration(500)
-        .attr("stroke", (d: any) => activePathIds.has(d.target.data.id) ? COLORS.activeNode : 'var(--border-color)')
-        .attr("stroke-width", (d: any) => activePathIds.has(d.target.data.id) ? 2.5 : 1.5)
-        .attr("stroke-dasharray", (d: any) => activePathIds.has(d.target.data.id) ? "none" : "6,4")
-        .attr("opacity", (d: any) => activePathIds.has(d.target.data.id) ? 1 : 0.5)
+        .attr("stroke", (d: any) => {
+          const isReversed = d.target.y <= d.source.y;
+          if (isReversed) return '#ef4444'; // Red-500 alert
+          return activePathIds.has(d.target.data.id) ? COLORS.activeNode : 'var(--border-color)';
+        })
+        .attr("stroke-width", (d: any) => {
+          const isReversed = d.target.y <= d.source.y;
+          return isReversed || activePathIds.has(d.target.data.id) ? 2.5 : 1.5;
+        })
+        .attr("stroke-dasharray", (d: any) => {
+          const isReversed = d.target.y <= d.source.y;
+          return isReversed || activePathIds.has(d.target.data.id) ? "none" : "6,4";
+        })
+        .attr("opacity", (d: any) => {
+          const isReversed = d.target.y <= d.source.y;
+          return isReversed || activePathIds.has(d.target.data.id) ? 1 : 0.5;
+        })
         .attr("d", d3.linkVertical()
           .x((d: any) => d.x)
           .y((d: any) => d.y) as any
@@ -411,29 +424,32 @@ const GraphView: React.FC<GraphViewProps> = ({
             }
           }
 
-          const baseBgClass = isUser
-            ? 'bg-cyan-50/90 dark:bg-cyan-950/40'
-            : 'bg-violet-50/90 dark:bg-violet-950/40';
+          // Standard Styles (Logic reused if no custom)
+          const isReversed = d.parent && d.y <= d.parent.y;
 
-          const borderClass = isActive
-            ? 'border-amber-500'
-            : (isUser ? 'border-cyan-200 dark:border-cyan-800/60' : 'border-violet-200 dark:border-violet-800/60');
+          const baseBgClass = isReversed
+            ? 'bg-red-50/90 dark:bg-red-950/40' 
+            : (isUser ? 'bg-cyan-50/90 dark:bg-cyan-950/40' : 'bg-violet-50/90 dark:bg-violet-950/40');
 
-          const shadowClass = isActive
-            ? 'shadow-[0_0_15px_rgba(245,158,11,0.4)]'
-            : 'shadow-sm hover:shadow-md';
+          const borderClass = isReversed
+            ? 'border-red-500/80 dark:border-red-500/80 border-[3px]'
+            : (isActive ? 'border-emerald-500' : (isUser ? 'border-cyan-200 dark:border-cyan-800/60' : 'border-violet-200 dark:border-violet-800/60'));
+
+          const shadowClass = isReversed
+            ? 'shadow-[0_0_20px_rgba(239,68,68,0.6)]'
+            : (isActive ? 'shadow-[0_0_15px_rgba(16,185,129,0.4)]' : 'shadow-sm hover:shadow-md');
 
           const finalBg = customColor ? '' : baseBgClass;
           const finalBorder = customColor ? '' : borderClass;
           const finalShadow = customColor ? '' : shadowClass;
 
-          const opacity = isActivePath ? 'opacity-100' : 'opacity-50 hover:opacity-100';
+          const opacity = (isActivePath || isReversed) ? 'opacity-100' : 'opacity-50 hover:opacity-100';
           const dimming = isDimmed ? 'opacity-20 grayscale' : '';
 
-          const iconColorClass = isUser ? 'text-cyan-600 dark:text-cyan-400' : 'text-violet-600 dark:text-violet-400';
+          const iconColorClass = isReversed 
+            ? 'text-red-600 dark:text-red-400'
+            : (isUser ? 'text-cyan-600 dark:text-cyan-400' : 'text-violet-600 dark:text-violet-400');
           const iconStyle = customColor ? `color: ${customColor}` : '';
-
-
 
           let content = d.data.customLabel || d.data.content || (isUser ? 'Empty' : '...');
           let summary = ''
@@ -523,7 +539,7 @@ const GraphView: React.FC<GraphViewProps> = ({
                             <span class="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Generating</span>
                         </div>
                     ` : ''}
-                    ${isActive ? `<div class="absolute inset-0 rounded-lg border ${customColor ? '' : 'border-amber-500/50'} pointer-events-none" style="${customColor ? 'border-color:' + customColor : ''}"></div>` : ''}
+                    ${isActive ? `<div class="absolute inset-0 rounded-lg border ${customColor ? '' : 'border-emerald-500/50'} pointer-events-none" style="${customColor ? 'border-color:' + customColor : ''}"></div>` : ''}
                  </div>
 
                  ${!isEditMode && d.data.id !== rootId ? `
@@ -597,7 +613,12 @@ const GraphView: React.FC<GraphViewProps> = ({
             gLayer.selectAll<SVGPathElement, any>(".link").attr("d", d3.linkVertical()
               .x((l: any) => l.x)
               .y((l: any) => l.y) as any
-            );
+            )
+            .attr("stroke", (l: any) => {
+              const isReversed = l.target.y <= l.source.y;
+              if (isReversed) return '#ef4444';
+              return activePathIds.has(l.target.data.id) ? COLORS.activeNode : 'var(--border-color)';
+            });
           })
           .on("end", (event, d) => {
             d3.select(event.sourceEvent.target).style("cursor", "move");
@@ -648,11 +669,11 @@ const GraphView: React.FC<GraphViewProps> = ({
             : 'bg-violet-50/90 dark:bg-violet-950/40';
 
           const borderClass = isActive
-            ? 'border-amber-500'
+            ? 'border-emerald-500'
             : (isUser ? 'border-cyan-200 dark:border-cyan-800/60' : 'border-violet-200 dark:border-violet-800/60');
 
           const shadowClass = isActive
-            ? 'shadow-[0_0_15px_rgba(245,158,11,0.4)]'
+            ? 'shadow-[0_0_15px_rgba(16,185,129,0.4)]'
             : 'shadow-sm hover:shadow-md';
 
           // Construct final strings
@@ -768,7 +789,7 @@ const GraphView: React.FC<GraphViewProps> = ({
                             <span class="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Generating</span>
                         </div>
                     ` : ''}
-                    ${isActive ? `<div class="absolute inset-0 rounded-lg border ${customColor ? '' : 'border-amber-500/50'} pointer-events-none" style="${customColor ? 'border-color:' + customColor : ''}"></div>` : ''}
+                    ${isActive ? `<div class="absolute inset-0 rounded-lg border ${customColor ? '' : 'border-emerald-500/50'} pointer-events-none" style="${customColor ? 'border-color:' + customColor : ''}"></div>` : ''}
                  </div>
 
                  <!-- Side Actions -->

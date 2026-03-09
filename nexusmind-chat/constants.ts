@@ -77,7 +77,7 @@ export const INITIAL_GREETING = "Hi, how can I help you today?";
 export const COLORS = {
    userNode: '#00f0ff', // Electric Cyan
    modelNode: '#7000ff', // Electric Violet
-   activeNode: '#ffaa00', // Deep Amber
+   activeNode: '#10b981', // Deep Emerald
    link: '#334155', // Slate 700
    background: '#030712', // Deep Void
    text: '#e2e8f0', // Slate 200

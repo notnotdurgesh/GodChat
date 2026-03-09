@@ -48,10 +48,25 @@
             shimmer: {
               '0%': { backgroundPosition: '200% 0' },
               '100%': { backgroundPosition: '-200% 0' },
+            },
+            'snackbar-enter': {
+              '0%': { opacity: '0', transform: 'translateY(12px) scale(0.95)' },
+              '100%': { opacity: '1', transform: 'translateY(0) scale(1)' },
+            },
+            'snackbar-exit': {
+              '0%': { opacity: '1', transform: 'translateY(0) scale(1)' },
+              '100%': { opacity: '0', transform: 'translateY(-8px) scale(0.95)' },
+            },
+            dash: {
+              '0%': { strokeDashoffset: '0' },
+              '100%': { strokeDashoffset: '-20' },
             }
           },
           animation: {
             shimmer: 'shimmer 2s linear infinite',
+            'snackbar-enter': 'snackbar-enter 0.3s ease-out',
+            'snackbar-exit': 'snackbar-exit 0.3s ease-in forwards',
+            dash: 'dash 1s linear infinite',
           }
         }
       }
@@ -122,6 +137,61 @@
         linear-gradient(to bottom, rgba(128, 128, 128, 0.05) 1px, transparent 1px);
       mask-image: linear-gradient(to bottom, black 40%, transparent 100%);
       pointer-events: none;
+    }
+
+    /* Premium Animations */
+    @keyframes shimmer-text {
+      0% { background-position: -200% center; }
+      100% { background-position: 200% center; }
+    }
+
+    .shimmer-text {
+      background: linear-gradient(90deg, 
+        var(--text-primary) 0%, 
+        var(--accent-primary) 25%, 
+        var(--text-primary) 50%, 
+        var(--accent-primary) 75%, 
+        var(--text-primary) 100%);
+      background-size: 200% auto;
+      color: transparent;
+      -webkit-background-clip: text;
+      background-clip: text;
+      animation: shimmer-text 6s linear infinite;
+    }
+
+    @keyframes border-shimmer {
+      0% { border-color: var(--border-color); }
+      50% { border-color: var(--accent-primary); shadow: 0 0 15px var(--accent-primary); }
+      100% { border-color: var(--border-color); }
+    }
+
+    .glass-input {
+      background: rgba(255, 255, 255, 0.03);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .dark .glass-input {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .glass-input:focus-within {
+      background: rgba(255, 255, 255, 0.07);
+      border-color: var(--accent-primary);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2), 0 0 0 1px var(--accent-primary);
+    }
+
+    @keyframes float {
+      0% { transform: translateY(0px); }
+      50% { transform: translateY(-5px); }
+      100% { transform: translateY(0px); }
+    }
+
+    .float-animation {
+      animation: float 4s ease-in-out infinite;
     }
   </style>
   <script type="importmap">

@@ -102,17 +102,17 @@ const ChatInput: React.FC<ChatInputProps> = ({
 
                 {/* Scroll To Bottom Button - Floating Action Button */}
                 {!isAtBottom && (
-                    <div className="absolute -top-20 left-1/2 -translate-x-1/2 z-30 animate-in fade-in zoom-in slide-in-from-bottom-2 duration-300 pointer-events-auto">
+                    <div className="absolute -top-14 right-4 z-30 animate-in fade-in zoom-in slide-in-from-right-2 duration-300 pointer-events-auto">
                         <button
                             onClick={onScrollToBottom}
-                            className="flex items-center justify-center w-10 h-10 bg-surface/80 backdrop-blur-md border border-border/50 rounded-full shadow-lg text-text-secondary hover:text-accent-primary hover:border-accent-primary/30 hover:bg-surface hover:scale-110 transition-all duration-300 group"
-                            title="Resume Auto-Scroll"
+                            className="flex items-center justify-center w-7 h-7 bg-surface/80 backdrop-blur-md border border-border/50 rounded-full shadow-md text-text-secondary hover:text-accent-primary hover:border-accent-primary/30 hover:bg-surface hover:scale-105 transition-all duration-300 group"
+                            title="Scroll to Bottom"
                         >
-                            <ArrowDown size={18} className="group-hover:scale-110 transition-transform duration-300" />
-
+                            <ArrowDown size={13} strokeWidth={3} className="group-hover:translate-y-0.5 transition-transform duration-300" />
+                            
                             {/* Pulse ring if active generation */}
                             {isCurrentPathStreaming && (
-                                <span className="absolute inset-0 rounded-full border-2 border-accent-primary/30 animate-ping opacity-20 pointer-events-none"></span>
+                                <span className="absolute inset-0 rounded-full border border-accent-primary/40 animate-ping opacity-30 pointer-events-none"></span>
                             )}
                         </button>
                     </div>

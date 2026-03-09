@@ -7,9 +7,14 @@ import Sidebar from './components/Sidebar';
 import ChatMessage from './components/ChatMessage';
 import GraphView from './components/GraphView';
 import SettingsModal from './components/SettingsModal';
+import ImportModal from './components/ImportModal';
 import ChatInput from './components/ChatInput';
-import { Send, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeft, BrainCircuit, Sun, Moon, Loader2, Quote, X, ArrowDown, GitFork, MessageSquarePlus, FastForward, CornerDownRight, Square } from 'lucide-react';
+import { PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeft, Sun, Moon, Loader2, Quote, X, ArrowDown, GitFork, MessageSquarePlus, FastForward, CornerDownRight, Square, Plus, Sparkles, BrainCircuit } from 'lucide-react';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
+import { SnackbarProvider, useSnackbar } from './contexts/SnackbarContext';
+import { ImportedChat, convertToSession } from './services/importService';
+import WelcomeDashboard from './components/WelcomeDashboard';
+import { motion, AnimatePresence } from 'framer-motion';
 
 // --- Helper: Local Storage ---
 import { useNavigate, useLocation, matchPath } from 'react-router-dom';
@@ -46,11 +51,13 @@ const ChatApp: React.FC = () => {
 
   // Replaced global isProcessing with set of active stream IDs
   const [activeStreams, setActiveStreams] = useState<Set<string>>(new Set());
+  const showSnackbarRef = useRef<any>(null); // declared early for handleStop access
 
   const [showGraph, setShowGraph] = useState(() => window.innerWidth >= 1024); // Default to on only for desktop
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => window.innerWidth >= 1024); // Default to on only for desktop
   const [isThinkingEnabled, setIsThinkingEnabled] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [graphFocusTrigger, setGraphFocusTrigger] = useState(0);
 
   // Suggestions Context Menu State
@@ -76,29 +83,25 @@ const ChatApp: React.FC = () => {
     const urlSessionId = match?.params.sessionId;
 
     // 2. Decide Action
-    if (urlSessionId) {
-      if (state.sessions[urlSessionId]) {
-        // Valid ID -> Sync State
-        if (state.currentSessionId !== urlSessionId) {
-          setState(prev => ({ ...prev, currentSessionId: urlSessionId }));
-          setIsSessionNotFound(false);
+      if (urlSessionId) {
+        if (state.sessions[urlSessionId]) {
+          // Valid ID -> Sync State
+          if (state.currentSessionId !== urlSessionId) {
+            setState(prev => ({ ...prev, currentSessionId: urlSessionId }));
+            setIsSessionNotFound(false);
+          }
+        } else {
+          // Invalid ID -> Show Error
+          setIsSessionNotFound(true);
         }
       } else {
-        // Invalid ID -> Show Error
-        setIsSessionNotFound(true);
-        // Do not change currentSessionId probably, or set to null? 
-        // Better to leave current state but overlay error.
+        // Root Path → clear currentSessionId to show dashboard
+        setIsSessionNotFound(false);
+        if (state.currentSessionId) {
+          setState(prev => ({ ...prev, currentSessionId: null }));
+        }
       }
-    } else {
-      // Root Path -> Redirect to most recent or create new
-      if (state.currentSessionId) {
-        // If we have state but no URL, replace URL with current state
-        navigate(`/chat/${state.currentSessionId}`, { replace: true });
-      } else {
-        // No state (first load empty) -> Create Session will handle it
-      }
-    }
-  }, [location.pathname, state.sessions, state.currentSessionId, navigate]);
+    }, [location.pathname, state.sessions, state.currentSessionId]);
 
   // Helper to get thread path early for hooks
   const getThreadPath = useCallback((session: ChatSession | null): MessageNode[] => {
@@ -124,22 +127,53 @@ const ChatApp: React.FC = () => {
   // Check if any node in the current path is streaming
   const isCurrentPathStreaming = threadPath.some(node => activeStreams.has(node.id));
 
-  const handleStop = useCallback(() => {
-    // Stop the stream that is part of the current active path
-    if (!currentSession) return;
-    const path = getThreadPath(currentSession);
-    const streamingNode = path.find(node => activeStreams.has(node.id));
-
-    if (streamingNode && streamControllersRef.current.has(streamingNode.id)) {
-      streamControllersRef.current.get(streamingNode.id)?.abort();
-      streamControllersRef.current.delete(streamingNode.id);
-      setActiveStreams(prev => {
-        const next = new Set(prev);
-        next.delete(streamingNode.id);
-        return next;
-      });
+  // Compute which sessions are actively streaming (for sidebar indicator)
+  const streamingSessionIds = React.useMemo(() => {
+    if (activeStreams.size === 0) return new Set<string>();
+    const ids = new Set<string>();
+    for (const [sessionId, session] of Object.entries(state.sessions)) {
+      for (const nodeId of activeStreams) {
+        if (session.nodes[nodeId]) {
+          ids.add(sessionId);
+          break;
+        }
+      }
     }
-  }, [activeStreams, currentSession, getThreadPath]);
+    return ids;
+  }, [activeStreams, state.sessions]);
+
+  const handleStop = useCallback(() => {
+    // Only stop the stream on the current active path (not other branches)
+    const currentState = stateRef.current;
+    const session = currentState.currentSessionId ? currentState.sessions[currentState.currentSessionId] : null;
+    if (!session) return;
+
+    // Walk the current thread path from lastActiveNodeId to root
+    let found = false;
+    let nodeId: string | null = session.lastActiveNodeId;
+    while (nodeId) {
+      const node = session.nodes[nodeId];
+      if (!node) break;
+
+      // If this node has an active stream controller, abort it
+      if (streamControllersRef.current.has(nodeId)) {
+        streamControllersRef.current.get(nodeId)?.abort();
+        streamControllersRef.current.delete(nodeId);
+        setActiveStreams(prev => {
+          const next = new Set(prev);
+          next.delete(nodeId!);
+          return next;
+        });
+        found = true;
+        break; // Only one stream per path, we're done
+      }
+      nodeId = node.parentId;
+    }
+
+    if (found) {
+      showSnackbarRef.current('Generation stopped', 'info', undefined, 1500);
+    }
+  }, []);
 
   // Check for API key on mount
   useEffect(() => {
@@ -242,6 +276,8 @@ const ChatApp: React.FC = () => {
 
   // Theme State via Context
   const { theme, toggleTheme } = useTheme();
+  const { showSnackbar } = useSnackbar();
+  showSnackbarRef.current = showSnackbar;
 
   // --- Mobile Swipe Gestures ---
   const touchStartRef = useRef<{ x: number, y: number } | null>(null);
@@ -376,6 +412,22 @@ const ChatApp: React.FC = () => {
 
   // --- Session Management ---
   const createSession = useCallback(() => {
+    // Check if there's already an empty "New Chat" we can navigate to
+    const existingEmpty = Object.values(state.sessions).find(s => {
+      if (s.title !== 'New Chat') return false;
+      // A session is "empty" if it only has the root node (the greeting)
+      const nodeKeys = Object.keys(s.nodes);
+      return nodeKeys.length === 1;
+    });
+
+    if (existingEmpty) {
+      // Just navigate to the existing empty chat instead of creating a new one
+      setState(prev => ({ ...prev, currentSessionId: existingEmpty.id }));
+      navigate(`/chat/${existingEmpty.id}`);
+      showSnackbar('Switched to existing empty chat', 'info');
+      return;
+    }
+
     const rootId = uuidv4();
     const sessionId = uuidv4();
 
@@ -430,7 +482,69 @@ const ChatApp: React.FC = () => {
 
     // Navigate to new session
     navigate(`/chat/${sessionId}`);
-  }, [navigate]);
+    showSnackbar('New chat created', 'success');
+  }, [navigate, showSnackbar, state.sessions]);
+
+  const handleStartNewChat = useCallback(async (query: string) => {
+    const rootId = uuidv4();
+    const sessionId = uuidv4();
+
+    const rootNode: MessageNode = {
+      id: rootId,
+      parentId: null,
+      childrenIds: [],
+      role: Role.MODEL,
+      content: INITIAL_GREETING,
+      timestamp: Date.now()
+    };
+
+    setState(prev => {
+      const minOrder = Object.values(prev.sessions).reduce((min, s) => Math.min(min, s.order || 0), 0);
+
+      const newSession: ChatSession = {
+        id: sessionId,
+        title: query.length > 30 ? query.slice(0, 30) + '...' : query,
+        rootNodeId: rootId,
+        nodes: { [rootId]: rootNode },
+        notes: {
+          'infinite-tl': { id: 'infinite-tl', x: -500000, y: -500000, content: '.', resizeMode: 'AUTO', style: { fontSize: 'S', color: 'transparent' }, createdAt: Date.now() },
+          'infinite-br': { id: 'infinite-br', x: 500000, y: 500000, content: '.', resizeMode: 'AUTO', style: { fontSize: 'S', color: 'transparent' }, createdAt: Date.now() }
+        },
+        lastActiveNodeId: rootId,
+        updatedAt: Date.now(),
+        order: minOrder - 1000
+      };
+
+      return {
+        ...prev,
+        sessions: { ...prev.sessions, [sessionId]: newSession },
+        currentSessionId: sessionId
+      };
+    });
+
+    navigate(`/chat/${sessionId}`);
+    
+    // Trigger the flow
+    await generateFromNode(rootId, query, sessionId, isThinkingEnabled);
+  }, [navigate, isThinkingEnabled]);
+  
+  const handleImportChat = useCallback((imported: ImportedChat) => {
+    const { session } = convertToSession(imported);
+    
+    setState(prev => {
+      const minOrder = Object.values(prev.sessions).reduce((min, s) => Math.min(min, s.order || 0), 0);
+      const newSession = { ...session, order: minOrder - 1000 };
+      
+      return {
+        ...prev,
+        sessions: { ...prev.sessions, [session.id]: newSession },
+        currentSessionId: session.id
+      };
+    });
+
+    navigate(`/chat/${session.id}`);
+    showSnackbar(`Imported "${imported.title}"`, 'success');
+  }, [navigate, showSnackbar]);
 
   const deleteSession = useCallback((id: string) => {
     // Abort active streams for this session
@@ -456,30 +570,43 @@ const ChatApp: React.FC = () => {
       }
     }
 
+    const sessionTitle = stateRef.current.sessions[id]?.title || 'Chat';
+    const wasCurrent = stateRef.current.currentSessionId === id;
+
     setState(prev => {
-      const { [id]: _discardSession, ...rest } = prev.sessions;
-      const nextId = prev.currentSessionId === id ? (Object.keys(rest)[0] || null) : prev.currentSessionId;
+      const remainingSessions = { ...prev.sessions };
+      delete remainingSessions[id];
 
-      // If we deleted the current one, navigate
-      if (prev.currentSessionId === id) {
-        if (nextId) navigate(`/chat/${nextId}`);
-        else navigate('/'); // No sessions left
-      }
-
-      return { sessions: rest, folders: prev.folders, currentSessionId: nextId };
+      return { 
+        ...prev, 
+        sessions: remainingSessions, 
+        currentSessionId: wasCurrent ? null : prev.currentSessionId 
+      };
     });
-  }, [navigate]);
+
+    if (wasCurrent) {
+      setIsSessionNotFound(false);
+      navigate('/');
+    }
+    showSnackbar(`Deleted "${sessionTitle.length > 25 ? sessionTitle.slice(0, 25) + '…' : sessionTitle}"`, 'info');
+  }, [navigate, showSnackbar]);
 
   const selectSession = useCallback((id: string) => {
     // setState(prev => ({ ...prev, currentSessionId: id })); // Legacy
     navigate(`/chat/${id}`);
   }, [navigate]);
 
+  // Only auto-create on very first app load (no sessions at all + no URL)
+  const hasAutoCreatedRef = useRef(false);
   useEffect(() => {
-    if (!state.currentSessionId && Object.keys(state.sessions).length === 0) {
-      if (location.pathname === '/' || location.pathname === '') {
-        createSession();
-      }
+    if (
+      !hasAutoCreatedRef.current &&
+      !state.currentSessionId && 
+      Object.keys(state.sessions).length === 0 && 
+      (location.pathname === '/' || location.pathname === '')
+    ) {
+      hasAutoCreatedRef.current = true;
+      createSession();
     }
   }, [state.currentSessionId, state.sessions, createSession, location.pathname]);
 
@@ -963,19 +1090,39 @@ const ChatApp: React.FC = () => {
   }, []);
 
   const deleteFolder = useCallback((id: string) => {
+    // Determine if current session is in this folder BEFORE state update
+    const currentId = state.currentSessionId;
+    const sessionsInFolder = Object.keys(state.sessions).filter(sid => state.sessions[sid].folderId === id);
+    const currentSessionDeleted = currentId && sessionsInFolder.includes(currentId);
+
     setState(prev => {
-      // Move sessions out first
+      // Delete all sessions in this folder
       const updatedSessions = { ...prev.sessions };
-      Object.keys(updatedSessions).forEach(sid => {
-        if (updatedSessions[sid].folderId === id) {
-          updatedSessions[sid] = { ...updatedSessions[sid], folderId: undefined };
-        }
+      sessionsInFolder.forEach(sid => {
+        delete updatedSessions[sid];
       });
 
       const { [id]: _discardFolder, ...restFolders } = prev.folders;
-      return { ...prev, sessions: updatedSessions, folders: restFolders };
+
+      // Pick a new currentSessionId
+      let newCurrentId = prev.currentSessionId;
+      if (newCurrentId && !updatedSessions[newCurrentId]) {
+        newCurrentId = Object.keys(updatedSessions)[0] || null;
+      }
+
+      return { ...prev, sessions: updatedSessions, folders: restFolders, currentSessionId: newCurrentId };
     });
-  }, []);
+
+    // Navigate AFTER state update — go to first remaining session or home
+    if (currentSessionDeleted) {
+      const remainingSessions = Object.keys(state.sessions).filter(sid => !sessionsInFolder.includes(sid));
+      if (remainingSessions.length > 0) {
+        navigate(`/chat/${remainingSessions[0]}`);
+      } else {
+        navigate('/');
+      }
+    }
+  }, [state.sessions, state.currentSessionId, navigate]);
 
   const updateFolder = useCallback((id: string, updates: Partial<SessionFolder>) => {
     setState(prev => ({
@@ -1071,7 +1218,24 @@ const ChatApp: React.FC = () => {
     scrollToBottom(true);
   }, [state.currentSessionId, currentSession?.lastActiveNodeId, scrollToBottom]);
 
-  if (!currentSession && !isSessionNotFound) return <div className="h-screen bg-background flex items-center justify-center text-text-secondary animate-pulse">Initializing ...</div>;
+  // Extracted dashboard variables
+  const hasChats = Object.keys(state.sessions).length > 0;
+  const recentChats = hasChats
+    ? Object.values(state.sessions)
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .slice(0, 3)
+    : [];
+
+  const formatTimeAgo = (ts: number) => {
+    const diff = Date.now() - ts;
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    const days = Math.floor(hrs / 24);
+    return `${days}d ago`;
+  };
 
   if (isSessionNotFound) {
     return (
@@ -1167,6 +1331,8 @@ const ChatApp: React.FC = () => {
           onOpenSettings={() => {
             setIsSettingsOpen(true);
           }}
+          onOpenImport={() => setIsImportModalOpen(true)}
+          streamingSessionIds={streamingSessionIds}
         />
       </div>
 
@@ -1177,7 +1343,7 @@ const ChatApp: React.FC = () => {
         <div className="absolute inset-0 cyber-grid z-0 opacity-20"></div>
 
         {/* Header */}
-        <div className={`h-14 flex items-center justify-between px-4 shrink-0 sticky top-0 bg-background/80 backdrop-blur-md transition-all duration-300 ${isGraphFullscreen ? 'z-[95]' : 'z-20'}`}>
+        <div className={`h-14 flex items-center justify-between px-4 shrink-0 sticky top-0 bg-background/80 backdrop-blur-md transition-all duration-300 relative ${isGraphFullscreen ? 'z-[95]' : 'z-20'}`}>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
@@ -1187,10 +1353,30 @@ const ChatApp: React.FC = () => {
               {isSidebarOpen ? <PanelLeftClose size={20} /> : <PanelLeft size={20} />}
             </button>
 
-            <h2 className="font-semibold text-text-primary text-sm truncate max-w-[200px] opacity-80 select-none hidden sm:block">
-              {currentSession.title}
-            </h2>
+            {currentSession && (
+              <h2 className="font-semibold text-text-primary text-sm truncate opacity-80 select-none hidden sm:block max-w-[200px] sm:max-w-xs md:max-w-sm">
+                {currentSession.title}
+              </h2>
+            )}
           </div>
+
+          {/* Centered App Logo / Home Button */}
+          <button 
+            onClick={() => {
+              navigate('/');
+              if (state.currentSessionId) {
+                setState(prev => ({ ...prev, currentSessionId: null }));
+              }
+            }}
+            className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2.5 px-3 py-1.5 rounded-xl transition-all duration-300 group select-none cursor-pointer"
+            title="Return to Dashboard"
+          >
+            <div className="flex flex-col items-start leading-none hidden sm:flex">
+              <span className="font-bold text-[15px] tracking-tight text-text-primary">
+                NexusMind
+              </span>
+            </div>
+          </button>
 
           <div className="flex items-center gap-2">
             <button
@@ -1200,24 +1386,42 @@ const ChatApp: React.FC = () => {
               {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
             </button>
 
-            <button
-              onClick={() => {
-                if (isGraphFullscreen) setIsGraphFullscreen(false);
-                else setShowGraph(!showGraph);
-              }}
-              className={`p-2 rounded-lg transition-colors ${showGraph || isGraphFullscreen ? 'text-accent-primary bg-accent-primary/10' : 'text-text-secondary hover:bg-surface'}`}
-              title={isGraphFullscreen ? "Exit Fullscreen" : "Toggle Graph View"}
-            >
-              {isGraphFullscreen ? <X size={20} /> : (showGraph ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />)}
-            </button>
+            {currentSession && (
+              <button
+                onClick={() => {
+                  if (isGraphFullscreen) setIsGraphFullscreen(false);
+                  else setShowGraph(!showGraph);
+                }}
+                className={`p-2 rounded-lg transition-colors ${showGraph || isGraphFullscreen ? 'text-accent-primary bg-accent-primary/10' : 'text-text-secondary hover:bg-surface'}`}
+                title={isGraphFullscreen ? "Exit Fullscreen" : "Toggle Graph View"}
+              >
+                {isGraphFullscreen ? <X size={20} /> : (showGraph ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />)}
+              </button>
+            )}
           </div>
         </div>
 
         {/* Content Split */}
         <div className="flex-1 flex overflow-hidden relative z-10">
 
-          {/* Chat Stream */}
-          <div className={`flex-1 flex flex-col h-full transition-all duration-300 relative z-10 min-w-0`}>
+          {!currentSession ? (
+            <div className="flex-1 flex items-center justify-center overflow-y-auto relative z-10 w-full h-full">
+              <AnimatePresence mode="wait">
+                <WelcomeDashboard 
+                  key="welcome" 
+                  onStartChat={handleStartNewChat} 
+                  recentChats={recentChats}
+                  onSelectSession={selectSession}
+                  formatTimeAgo={formatTimeAgo}
+                  isThinkingEnabled={isThinkingEnabled}
+                  onToggleThinking={() => setIsThinkingEnabled(!isThinkingEnabled)}
+                />
+              </AnimatePresence>
+            </div>
+          ) : (
+            <>
+              {/* Chat Stream */}
+              <div className={`flex-1 flex flex-col h-full transition-all duration-300 relative z-10 min-w-0`}>
 
             {/* Scrollable Area */}
             <div
@@ -1360,6 +1564,8 @@ const ChatApp: React.FC = () => {
               />
             </div>
           </div>
+          </>
+          )}
 
         </div>
       </div>
@@ -1369,6 +1575,12 @@ const ChatApp: React.FC = () => {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
       />
+
+      <ImportModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        onImport={handleImportChat}
+      />
     </div>
   );
 };
@@ -1376,7 +1588,9 @@ const ChatApp: React.FC = () => {
 const App: React.FC = () => {
   return (
     <ThemeProvider>
-      <ChatApp />
+      <SnackbarProvider>
+        <ChatApp />
+      </SnackbarProvider>
     </ThemeProvider>
   );
 };
