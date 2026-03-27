@@ -1,48 +1,17 @@
-# NexusMind Ecosystem
+# GodChat
 
-This repository contains the source code for the **NexusMind** ecosystem, comprising a powerful front-end chat interface and a specialized backend service for diagram generation.
+## Development Roadmap
+- **Q1 2026:** Initial MVP release with core features.
+- **Q2 2026:** User feedback collection and iteration on features.
+- **Q3 2026:** Scaling up for user growth and performance optimization.
 
-## 📂 Project Components
+## Fullstack Architecture Plan
+- **Frontend:** React.js for a responsive user interface.
+- **Backend:** Node.js with Express for RESTful API services.
+- **Database:** MongoDB for flexible data management.
+- **Hosting:** Deployed on AWS for availability and scalability.
 
-### 1. [NexusMind Chat](./nexusmind-chat)
-The React-based client application featuring an interactive graph view, intelligent chat capabilities, and advanced UI/UX.
-- **Location**: `nexusmind-chat/`
-- **Key Features**: Graph visualization, Mermaid tool integration, "Thinking" process display.
-
-### 2. [Mermaid MCP Service](./mermaid-mcp)
-A backend service compatible with the Model Context Protocol (MCP) that handles Mermaid diagram validation and generation.
-- **Location**: `mermaid-mcp/`
-- **Key Features**: Syntax validation, secure diagram rendering, API documentation endpoints.
-
-## 🚀 Getting Started
-
-To get the entire system up and running, you will need to start both the client and the server.
-
-### Prerequisites
-- Node.js (v18+)
-- npm & yarn
-
-### Quick Start Guide
-
-1. **Start the Backend Service:**
-   Open a terminal:
-   ```bash
-   cd mermaid-mcp
-   npm install
-   npm start
-   ```
-   *Server will run on port 5000.*
-
-2. **Start the Frontend Client:**
-   Open a second terminal:
-   ```bash
-   cd nexusmind-chat
-   yarn install
-   yarn dev
-   ```
-   *Client will run on http://localhost:5173.*
-
-## 📚 Documentation
-For detailed instructions, please refer to the README files in each subdirectory:
-- [NexusMind Chat Documentation](./nexusmind-chat/README.md)
-- [Mermaid MCP Service Documentation](./mermaid-mcp/README.md)
+## Installation Instructions
+1. Clone the repository.
+2. Run `npm install` to install dependencies.
+3. Start the application using `npm start`.
