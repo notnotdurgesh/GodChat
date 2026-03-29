@@ -1,48 +1,75 @@
-# NexusMind Ecosystem
+# jellyfsch Ecosystem
 
-This repository contains the source code for the **NexusMind** ecosystem, comprising a powerful front-end chat interface and a specialized backend service for diagram generation.
+This repository contains a `frontend` app and a unified `backend` service. The backend handles authentication, MongoDB-backed persistence, chat generation, imports, SSE streaming, and Mermaid tooling.
 
-## 📂 Project Components
+## Services
 
-### 1. [NexusMind Chat](./nexusmind-chat)
-The React-based client application featuring an interactive graph view, intelligent chat capabilities, and advanced UI/UX.
-- **Location**: `nexusmind-chat/`
-- **Key Features**: Graph visualization, Mermaid tool integration, "Thinking" process display.
+### 1. `frontend`
+The React client application.
+- Authenticated workspace shell
+- Graph visualization and branching chat UX
+- Server-backed chat persistence and SSE streaming
 
-### 2. [Mermaid MCP Service](./mermaid-mcp)
-A backend service compatible with the Model Context Protocol (MCP) that handles Mermaid diagram validation and generation.
-- **Location**: `mermaid-mcp/`
-- **Key Features**: Syntax validation, secure diagram rendering, API documentation endpoints.
+### 2. `backend`
+The single backend service for the app runtime.
+- Username/password signup and login
+- MongoDB-backed per-user chat state
+- Gemini chat generation
+- Chat import endpoints for Gemini, Claude, and ChatGPT
+- Mermaid tool endpoints: `/tools/get_syntax_docs`, `/tools/get_config_docs`, `/tools/render_diagram`
+- Optional Redis pub/sub fanout for streaming
 
-## 🚀 Getting Started
+## Quick Start
 
-To get the entire system up and running, you will need to start both the client and the server.
+1. Install dependencies from the repo root:
+```bash
+npm install
+```
 
-### Prerequisites
-- Node.js (v18+)
-- npm & yarn
+2. Make sure Docker Desktop is running if you want the repo-managed MongoDB container.
 
-### Quick Start Guide
+3. Add a backend Gemini key if you want live model responses:
+```bash
+GEMINI_API_KEY=...
+```
 
-1. **Start the Backend Service:**
-   Open a terminal:
-   ```bash
-   cd mermaid-mcp
-   npm install
-   npm start
-   ```
-   *Server will run on port 5000.*
+4. Start the full stack from the repo root:
+```bash
+npm run dev
+```
 
-2. **Start the Frontend Client:**
-   Open a second terminal:
-   ```bash
-   cd nexusmind-chat
-   yarn install
-   yarn dev
-   ```
-   *Client will run on http://localhost:5173.*
+This starts MongoDB first, then launches:
+- `backend` on `http://localhost:5001`
+- `frontend` on `http://localhost:3000`
 
-## 📚 Documentation
-For detailed instructions, please refer to the README files in each subdirectory:
-- [NexusMind Chat Documentation](./nexusmind-chat/README.md)
-- [Mermaid MCP Service Documentation](./mermaid-mcp/README.md)
+## Authentication
+
+- Open the frontend and create an account with username/password.
+- The backend stores the workspace per user in MongoDB.
+- Login state is kept in an HTTP-only cookie so SSE chat streams stay authenticated.
+
+## Verification
+
+Backend health:
+```bash
+http://localhost:5001/api/health
+```
+
+Auth/session check:
+```bash
+http://localhost:5001/api/auth/me
+```
+
+Backend Mermaid tools:
+```bash
+POST http://localhost:5001/tools/get_syntax_docs
+POST http://localhost:5001/tools/get_config_docs
+POST http://localhost:5001/tools/render_diagram
+```
+
+## Notes
+
+- Set `BACKEND_PORT` if you want the backend on a different port.
+- Set `VITE_BACKEND_URL` if the frontend should target a non-default backend URL.
+- Redis is optional. Set `REDIS_URL` only if you want multi-instance stream fanout.
+- Mermaid docs now live directly inside `backend/MermaidDocs`.

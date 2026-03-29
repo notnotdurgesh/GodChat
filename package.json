@@ -1,15 +1,17 @@
 {
-  "name": "nexusmind-monorepo",
+  "name": "jellyfsch-monorepo",
   "private": true,
-  "description": "Monorepo for NexusMind Chat and Mermaid MCP service",
+  "description": "Monorepo for the jellyfsch frontend and unified backend",
   "packageManager": "npm@11.11.0",
   "workspaces": [
-    "nexusmind-chat",
-    "mermaid-mcp",
-    "import-api"
+    "frontend",
+    "backend"
   ],
   "scripts": {
-    "dev": "npx turbo run dev",
+    "dev": "node scripts/dev-runner.cjs",
+    "dev:turbo": "docker compose up -d mongo && npx turbo run dev --filter=frontend --filter=backend",
+    "db:up": "docker compose up -d mongo",
+    "db:down": "docker compose stop mongo",
     "build": "npx turbo run build",
     "lint": "npx turbo run lint",
     "install-all": "npm install"

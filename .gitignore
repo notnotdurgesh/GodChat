@@ -48,3 +48,6 @@ coverage/
 
 # Testing
 .vscode-test/
+
+# Local backend data
+backend/data/
