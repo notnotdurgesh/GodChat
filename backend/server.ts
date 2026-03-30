@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { AuthService } from './src/authService';
@@ -46,14 +48,27 @@ loadEnvFile(path.resolve(__dirname, '..', '.env'));
 loadEnvFile(path.resolve(__dirname, '..', 'frontend', '.env'));
 
 const app = express();
+
+const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000);
+const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX || 200);
+
+const apiLimiter = rateLimit({
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  max: RATE_LIMIT_MAX,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Too many requests from this IP, please try again later',
+});
+
 const PORT = Number(process.env.BACKEND_PORT || process.env.PORT || 5001);
 const stateStore = new ChatStateStore(process.env.MONGODB_URI, process.env.MONGODB_DB);
 const attachmentStore = new AttachmentStore(process.env.MONGODB_URI, process.env.MONGODB_DB);
 const authService = new AuthService(process.env.MONGODB_URI, process.env.MONGODB_DB);
 const streamManager = new StreamManager();
 const importProviders = new ImportProviders();
+const corsOriginSetting = process.env.CORS_ORIGIN || 'http://127.0.0.1:3000,http://localhost:3000';
 const allowedOrigins = new Set(
-  (process.env.CORS_ORIGIN || 'http://127.0.0.1:3000,http://localhost:3000')
+  corsOriginSetting
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean),
@@ -63,9 +78,19 @@ const STATE_ROUTE_LOGS = [
   '  state  /api/state',
 ];
 
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginResourcePolicy: { policy: 'same-site' },
+  crossOriginEmbedderPolicy: false,
+}));
+
+app.use('/api', apiLimiter);
+app.use('/tools', apiLimiter);
+app.use('/upload', apiLimiter);
+
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.has(origin)) {
+    if (!origin || corsOriginSetting === '*' || allowedOrigins.has(origin)) {
       callback(null, true);
       return;
     }
@@ -73,6 +98,8 @@ app.use(cors({
     callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
+  exposedHeaders: ['Content-Type', 'Set-Cookie'],
+  maxAge: 600,
 }));
 app.use(bodyParser.json({ limit: '10mb' }));
 
@@ -145,7 +172,7 @@ async function startServer(): Promise<void> {
   await streamManager.start();
 
   app.listen(PORT, () => {
-    console.log(`jellyfsch backend running on port ${PORT}`);
+    console.log(`fschchat backend running on port ${PORT}`);
     [
       ...TOOL_ROUTE_LOGS,
       ...SYSTEM_ROUTE_LOGS,

@@ -148,7 +148,7 @@ function waitForHealth(url, timeoutMs = 90000) {
 
   return new Promise((resolve, reject) => {
     const tryFetch = () => {
-      const request = http.get(url, { headers: { 'x-jellyfsch-dev-probe': '1' } }, (response) => {
+      const request = http.get(url, { headers: { 'x-fschchat-dev-probe': '1' } }, (response) => {
         response.resume();
         if (response.statusCode && response.statusCode >= 200 && response.statusCode < 500) {
           resolve();
@@ -198,7 +198,7 @@ function waitForBackendReady(child, timeoutMs = 90000) {
 
     const onStdout = (chunk) => {
       const text = chunk.toString();
-      if (text.includes('jellyfsch backend running on port')) {
+      if (text.includes('fschchat backend running on port')) {
         // keep health polling as the final gate, but announce earlier progress
         log('[backend]', colors.dim, 'Backend startup banner detected, confirming health endpoint...');
       }
@@ -256,7 +256,7 @@ async function shutdown(exitCode = 0) {
 }
 
 async function main() {
-  log('[dev]', colors.cyan, 'Preparing jellyfsch local development environment');
+  log('[dev]', colors.cyan, 'Preparing fschchat local development environment');
   log('[dev]', colors.dim, `Workspace: ${cwd}`);
 
   await runOneShot(dockerCommand, ['compose', 'up', '-d', 'mongo'], '[setup]', colors.blue);

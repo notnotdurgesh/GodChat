@@ -65,7 +65,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ backendConfig, isLoading, error
               <Sparkles size={18} />
             </div>
             <div>
-              <div className="text-sm font-semibold tracking-tight">jellyfsch</div>
+              <div className="text-sm font-semibold tracking-tight">fschchat</div>
               <div className="text-xs text-text-secondary">Secure chat workspace</div>
             </div>
           </div>

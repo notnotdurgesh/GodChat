@@ -1,4 +1,4 @@
-# jellyfsch Ecosystem
+# fschchat Ecosystem
 
 This repository contains a `frontend` app and a unified `backend` service. The backend handles authentication, MongoDB-backed persistence, chat generation, imports, SSE streaming, and Mermaid tooling.
 
@@ -48,7 +48,22 @@ This starts MongoDB first, then launches:
 - The backend stores the workspace per user in MongoDB.
 - Login state is kept in an HTTP-only cookie so SSE chat streams stay authenticated.
 
+## Security Audit and Hardening
+
+The following protections are now applied in production and local deployments:
+- `helmet` secure HTTP headers
+- rate limiting for API throughput (`RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX`)
+- strict CORS origin allow-list via `CORS_ORIGIN` (avoid `*` in prod)
+- request body size limits (`10mb`)
+- `x-powered-by` disabled
+- `trust proxy` set (for correct client IP behind reverse proxies)
+
 ## Verification
+
+Run unified end-to-end check:
+```bash
+npm run check:e2e
+```
 
 Backend health:
 ```bash
@@ -73,3 +88,36 @@ POST http://localhost:5001/tools/render_diagram
 - Set `VITE_BACKEND_URL` if the frontend should target a non-default backend URL.
 - Redis is optional. Set `REDIS_URL` only if you want multi-instance stream fanout.
 - Mermaid docs now live directly inside `backend/MermaidDocs`.
+
+## Production (DigitalOcean droplet) deployment
+
+1. Clone the repo on your VPS:
+```bash
+git clone <your-repo-url>.git /opt/fschchat
+cd /opt/fschchat
+```
+
+2. Copy example env and set secrets:
+```bash
+cp .env.example .env
+# Edit .env to set GEMINI_API_KEY and any secret values
+```
+
+3. Build and start containers:
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+4. Verify container state and logs:
+```bash
+docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml logs --tail 50 frontend
+docker compose -f docker-compose.prod.yml logs --tail 50 backend
+```
+
+5. Health checks:
+- `http://<droplet-ip>/` should load frontend
+- `http://<droplet-ip>/api/health` should respond
+
+> Optional: Use `ufw allow 80/tcp && ufw allow 443/tcp` and add HTTPS via certbot.
+

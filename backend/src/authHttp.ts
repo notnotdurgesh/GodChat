@@ -3,7 +3,7 @@ import { AuthService } from './authService';
 import { ChatStateStore } from './chatStateStore';
 import { AuthRequest } from './serverTypes';
 
-export const SESSION_COOKIE = 'jellyfsch_session';
+export const SESSION_COOKIE = 'fschchat_session';
 
 export const AUTH_ROUTE_LOGS = [
   '  auth   /api/auth/*',
@@ -158,7 +158,7 @@ export const registerAuthRoutes = ({
       data: {
         exportedAt: new Date().toISOString(),
         app: {
-          name: 'jellyfsch',
+          name: 'fschchat',
           storageProvider: 'mongodb',
           authEnabled: true,
         },

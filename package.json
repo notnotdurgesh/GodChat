@@ -1,7 +1,7 @@
 {
-  "name": "jellyfsch-monorepo",
+  "name": "fschchat-monorepo",
   "private": true,
-  "description": "Monorepo for the jellyfsch frontend and unified backend",
+  "description": "Monorepo for the fschchat frontend and unified backend",
   "packageManager": "npm@11.11.0",
   "workspaces": [
     "frontend",
@@ -14,7 +14,8 @@
     "db:down": "docker compose stop mongo",
     "build": "npx turbo run build",
     "lint": "npx turbo run lint",
-    "install-all": "npm install"
+    "install-all": "npm install",
+    "check:e2e": "node scripts/check-e2e.js"
   },
   "devDependencies": {
     "turbo": "^2.0.0"

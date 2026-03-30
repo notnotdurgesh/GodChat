@@ -1,7 +1,7 @@
 import { ChatState } from '../types';
 
 const API_BASE = process.env.BACKEND_URL || process.env.API_BASE || '';
-export const AUTH_REQUIRED_EVENT = 'jellyfsch:auth-required';
+export const AUTH_REQUIRED_EVENT = 'fschchat:auth-required';
 
 interface ApiEnvelope<T> {
   success: boolean;

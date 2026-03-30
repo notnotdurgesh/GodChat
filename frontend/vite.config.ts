@@ -6,9 +6,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
   const apiBase = env.VITE_BACKEND_URL || env.VITE_API_BASE || 'http://localhost:5001';
 
-  // In dev, use empty string so all /api/* calls go via the Vite proxy (same-origin).
-  // In production, use the absolute backend URL.
-  const clientApiBase = mode === 'production' ? apiBase : '';
+  const clientApiBase = env.VITE_BACKEND_URL || '';
 
   return {
     server: {

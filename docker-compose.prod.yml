@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: fschchat-frontend
+    restart: unless-stopped
+    ports:
+      - '80:80'
+    depends_on:
+      - backend
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: fschchat-backend
+    restart: unless-stopped
+    ports:
+      - '5001:5001'
+    environment:
+      - PORT=5001
+      - BACKEND_PORT=5001
+      - MONGODB_URI=mongodb://mongo:27017/fschchat
+      - MONGODB_DB=fschchat
+      - CORS_ORIGIN=http://localhost
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      # Override via .env or environment variables in production pipeline if needed
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -f http://localhost:5001/api/health || exit 1']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      - mongo
+
+  mongo:
+    image: mongo:7
+    container_name: fschchat-mongo
+    restart: unless-stopped
+    ports:
+      - '27017:27017'
+    volumes:
+      - fschchat-mongo-data:/data/db
+
+volumes:
+  fschchat-mongo-data:

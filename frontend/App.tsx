@@ -1479,7 +1479,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
           >
             <div className="flex flex-col items-start leading-none hidden sm:flex">
               <span className="font-bold text-[15px] tracking-tight text-text-primary">
-                jellyfsch
+                fschchat
               </span>
             </div>
           </button>

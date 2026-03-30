@@ -1,6 +1,6 @@
 # Frontend
 
-The React client for jellyfsch. Chat generation, persistence, imports, authentication, and Mermaid tooling are all served by the unified backend in `../backend`.
+The React client for fschchat. Chat generation, persistence, imports, authentication, and Mermaid tooling are all served by the unified backend in `../backend`.
 
 ## Features
 

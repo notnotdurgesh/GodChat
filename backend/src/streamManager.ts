@@ -22,8 +22,8 @@ interface RedisStopMessage {
   streamId: string;
 }
 
-const STREAM_CHANNEL_PREFIX = 'jellyfsch:stream:';
-const STOP_CHANNEL_PREFIX = 'jellyfsch:stream-stop:';
+const STREAM_CHANNEL_PREFIX = 'fschchat:stream:';
+const STOP_CHANNEL_PREFIX = 'fschchat:stream-stop:';
 const MAX_BACKLOG = 500;
 const STREAM_TTL_MS = 15 * 60 * 1000;
 

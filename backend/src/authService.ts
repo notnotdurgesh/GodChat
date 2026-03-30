@@ -64,7 +64,7 @@ export class AuthService {
   private users: Collection<UserRecord> | null = null;
   private sessions: Collection<SessionRecord> | null = null;
 
-  constructor(uri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017', dbName = process.env.MONGODB_DB || 'jellyfsch') {
+  constructor(uri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017', dbName = process.env.MONGODB_DB || 'fschchat') {
     this.client = new MongoClient(uri);
     this.dbName = dbName;
   }

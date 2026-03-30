@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { X, ShieldCheck, AlertCircle, RefreshCw, Server, Database, Bot, UserRound, KeyRound, Download, LogOut, FileLock2 } from 'lucide-react';
+import { X, RefreshCw, Database, UserRound, KeyRound, Download, LogOut, FileLock2 } from 'lucide-react';
 import { BackendConfig, AuthenticatedUser } from '../services/backendService';
 
 interface SettingsModalProps {
@@ -13,20 +13,6 @@ interface SettingsModalProps {
   onExportData: () => Promise<void> | void;
   onLogout: () => Promise<void> | void;
 }
-
-const StatusPill: React.FC<{ label: string; ok: boolean | null }> = ({ label, ok }) => {
-  const className = ok === null
-    ? 'bg-zinc-500/10 border-zinc-500/20 text-zinc-500'
-    : ok
-      ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400'
-      : 'bg-amber-500/10 border-amber-500/20 text-amber-600 dark:text-amber-400';
-
-  return (
-    <span className={`inline-flex items-center rounded-full border px-3 py-1 text-[11px] uppercase tracking-wider font-bold ${className}`}>
-      {label}
-    </span>
-  );
-};
 
 const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
@@ -65,12 +51,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   }, [isOpen, user]);
 
   if (!isOpen) return null;
-
-  const chatConfigured = backendConfig?.chatConfigured ?? null;
-  const redisConfigured = backendConfig?.redisConfigured ?? null;
-  const mermaidConfigured = backendConfig?.mermaidConfigured ?? null;
-  const authEnabled = backendConfig?.authEnabled ?? null;
-  const storageProvider = backendConfig?.storageProvider ?? 'mongodb';
 
   const handleProfileSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -161,10 +141,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
               <UserRound size={18} />
               Account & Profile
             </button>
-            <button onClick={() => setActiveTab('backend')} className={`flex items-center gap-2 pb-1 border-b-2 font-bold transition-all ${activeTab === 'backend' ? 'border-accent-primary text-text-primary' : 'border-transparent text-text-secondary hover:text-text-primary'}`}>
-              <Server size={18} />
-              Workspace Backend
-            </button>
             <button onClick={() => setActiveTab('privacy')} className={`flex items-center gap-2 pb-1 border-b-2 font-bold transition-all ${activeTab === 'privacy' ? 'border-accent-primary text-text-primary' : 'border-transparent text-text-secondary hover:text-text-primary'}`}>
               <FileLock2 size={18} />
               Privacy & Cookies
@@ -248,30 +224,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                   <Download size={18} />
                   {isExporting ? 'Preparing...' : 'Download JSON'}
                 </button>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'backend' && (
-            <div className="space-y-8 animate-in fade-in duration-300">
-              <div className="bg-blue-50/50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-800 p-5 rounded-2xl flex gap-4">
-                <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg h-fit text-blue-600 dark:text-blue-400"><ShieldCheck size={20} /></div>
-                <div className="text-sm text-blue-900 dark:text-blue-100 leading-relaxed flex-1">
-                  <strong className="block mb-1 font-semibold text-blue-700 dark:text-blue-300">Protected workspace mode</strong>
-                  The browser no longer owns secrets or chat persistence. Authentication uses username/password plus an HTTP-only session cookie, and workspace data is stored securely in MongoDB.
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-                <div className="p-5 rounded-2xl border border-border bg-background/50 space-y-3"><div className="flex items-center gap-3 text-text-primary"><Bot size={18} className="text-accent-primary" /><span className="font-bold">Chat Provider</span></div><StatusPill label={chatConfigured ? 'Gemini Ready' : chatConfigured === null ? 'Checking' : 'Missing'} ok={chatConfigured} /><p className="text-xs font-medium text-text-secondary">Requires <code>GEMINI_API_KEY</code> on the backend server.</p></div>
-                <div className="p-5 rounded-2xl border border-border bg-background/50 space-y-3"><div className="flex items-center gap-3 text-text-primary"><Database size={18} className="text-accent-primary" /><span className="font-bold">Persistence</span></div><StatusPill label={storageProvider === 'mongodb' ? 'MongoDB' : 'Checking'} ok={storageProvider === 'mongodb'} /><p className="text-xs font-medium text-text-secondary">Per-user state is stored in MongoDB instead of local browser.</p></div>
-                <div className="p-5 rounded-2xl border border-border bg-background/50 space-y-3"><div className="flex items-center gap-3 text-text-primary"><UserRound size={18} className="text-accent-primary" /><span className="font-bold">Authentication</span></div><StatusPill label={authEnabled ? 'Enabled' : authEnabled === null ? 'Checking' : 'Disabled'} ok={authEnabled} /><p className="text-xs font-medium text-text-secondary">Signup and login restrict state and route access.</p></div>
-                <div className="p-5 rounded-2xl border border-border bg-background/50 space-y-3"><div className="flex items-center gap-3 text-text-primary"><Server size={18} className="text-accent-primary" /><span className="font-bold">Redis Fanout</span></div><StatusPill label={redisConfigured ? 'Connected' : redisConfigured === null ? 'Checking' : 'Optional'} ok={redisConfigured} /><p className="text-xs font-medium text-text-secondary">Enable <code>REDIS_URL</code> for multi-instance stream fanout.</p></div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="p-5 rounded-2xl border border-border bg-background/50 space-y-3"><div className="flex items-center gap-3 text-text-primary font-bold"><Server size={18} className="text-accent-primary" /> Dedicated Mermaid Render</div><StatusPill label={mermaidConfigured ? 'Ready' : mermaidConfigured === null ? 'Checking' : 'Unavailable'} ok={mermaidConfigured} /><p className="text-xs font-medium text-text-secondary">Mermaid docs and rendering execute inside the same backend environment.</p></div>
-                <div className="p-5 rounded-2xl border border-border bg-background/50 space-y-3"><div className="flex items-center gap-2 text-text-primary font-bold"><AlertCircle size={18} className="text-accent-primary" /> Operational Notes</div><div className="space-y-2 text-xs font-medium text-text-secondary"><div className="p-3 bg-surface rounded-lg border border-border">Data streams inherit your session cookie, gating access to the logged-in user.</div><div className="p-3 bg-surface rounded-lg border border-border">Imports are authenticated, keeping external data securely attached to the workspace.</div></div></div>
               </div>
             </div>
           )}

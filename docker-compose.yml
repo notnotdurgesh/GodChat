@@ -1,12 +1,12 @@
 services:
   mongo:
     image: mongo:7
-    container_name: jellyfsch-mongo
+    container_name: fschchat-mongo
     restart: unless-stopped
     ports:
       - '27017:27017'
     volumes:
-      - jellyfsch-mongo-data:/data/db
+      - fschchat-mongo-data:/data/db
 
 volumes:
-  jellyfsch-mongo-data:
+  fschchat-mongo-data:
