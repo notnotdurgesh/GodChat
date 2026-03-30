@@ -14,12 +14,14 @@ interface RegisterChatRoutesOptions {
   app: express.Express;
   stateStore: ChatStateStore;
   streamManager: StreamManager;
+  attachmentStore: import('./attachmentStore').AttachmentStore;
 }
 
 export const registerChatRoutes = ({
   app,
   stateStore,
   streamManager,
+  attachmentStore,
 }: RegisterChatRoutesOptions): void => {
   const startChatGeneration = async ({
     userId,
@@ -29,6 +31,7 @@ export const registerChatRoutes = ({
     history,
     prompt,
     enableThinking,
+    currentAttachments,
   }: {
     userId: string;
     streamId: string;
@@ -37,13 +40,77 @@ export const registerChatRoutes = ({
     history: any[];
     prompt: string;
     enableThinking: boolean;
+    currentAttachments?: any[];
   }): Promise<void> => {
     const abortController = new AbortController();
     streamManager.registerAbortController(streamId, abortController);
 
     try {
+      // Build prompt parts — inject current-turn attachments first, then user text
+      const promptParts: any[] = [];
+      if (currentAttachments && currentAttachments.length > 0) {
+        for (const att of currentAttachments) {
+          try {
+            const dbAtt = await attachmentStore.getAttachment(att.id, userId);
+            if (!dbAtt) continue;
+
+            // Helper: normalise MongoDB BSON Binary → Node.js Buffer
+            const normaliseToBuffer = (raw: any): Buffer => {
+              if (Buffer.isBuffer(raw)) return raw;
+              if (raw && raw._bsontype === 'Binary') return Buffer.isBuffer(raw.buffer) ? raw.buffer : Buffer.from(raw.buffer);
+              if (raw instanceof Uint8Array) return Buffer.from(raw);
+              if (raw && typeof raw === 'object' && raw.buffer) return Buffer.from(raw.buffer);
+              if (raw && typeof raw.value === 'function') { const v = raw.value(); return Buffer.isBuffer(v) ? v : Buffer.from(v); }
+              return Buffer.from(raw);
+            };
+
+            if (dbAtt.mimeType.startsWith('image/') && dbAtt.data) {
+              const imgBuffer = normaliseToBuffer(dbAtt.data);
+              // Validate: image buffer should have at least a few bytes and start with known magic bytes
+              const isValidImage = imgBuffer.length > 8 && (
+                // JPEG: FF D8 FF
+                (imgBuffer[0] === 0xFF && imgBuffer[1] === 0xD8 && imgBuffer[2] === 0xFF) ||
+                // PNG: 89 50 4E 47
+                (imgBuffer[0] === 0x89 && imgBuffer[1] === 0x50 && imgBuffer[2] === 0x4E && imgBuffer[3] === 0x47) ||
+                // GIF: 47 49 46
+                (imgBuffer[0] === 0x47 && imgBuffer[1] === 0x49 && imgBuffer[2] === 0x46) ||
+                // WebP: RIFF....WEBP
+                (imgBuffer[0] === 0x52 && imgBuffer[1] === 0x49 && imgBuffer[2] === 0x46 && imgBuffer[3] === 0x46) ||
+                // BMP: 42 4D
+                (imgBuffer[0] === 0x42 && imgBuffer[1] === 0x4D)
+              );
+
+              if (isValidImage) {
+                promptParts.push({ inlineData: { mimeType: dbAtt.mimeType, data: imgBuffer.toString('base64') } });
+              } else {
+                console.warn(`[Chat] Skipping image "${dbAtt.name}" — invalid/corrupt image data (${imgBuffer.length} bytes, header: ${imgBuffer.slice(0, 4).toString('hex')})`);
+                // Still mention it as text
+                promptParts.push({ text: `[Attached Image: ${dbAtt.name} — could not be processed]` });
+              }
+            } else if (dbAtt.mimeType === 'application/pdf' && dbAtt.data) {
+              // Gemini natively supports PDF via inlineData
+              const pdfBuffer = normaliseToBuffer(dbAtt.data);
+              if (pdfBuffer.length > 4 && pdfBuffer.slice(0, 5).toString() === '%PDF-') {
+                promptParts.push({ inlineData: { mimeType: 'application/pdf', data: pdfBuffer.toString('base64') } });
+              } else if (dbAtt.extractedText) {
+                promptParts.push({ text: `[Attached PDF: ${dbAtt.name}]\n\n${dbAtt.extractedText}` });
+              }
+            } else if (dbAtt.extractedText) {
+              promptParts.push({ text: `[Attached Document: ${dbAtt.name}]\n\n${dbAtt.extractedText}` });
+            } else {
+              // File uploaded but no text extraction and no image — just mention it
+              promptParts.push({ text: `[Attached File: ${dbAtt.name} (${dbAtt.mimeType})]` });
+            }
+          } catch (e: any) {
+            console.warn(`[Chat] Failed to process attachment ${att.id}:`, e.message);
+          }
+        }
+      }
+      if (prompt) promptParts.push({ text: prompt });
+
       await runChatGeneration({
         history,
+        promptParts: promptParts.length > 0 ? promptParts : [{ text: prompt }],
         prompt,
         enableThinking,
         signal: abortController.signal,
@@ -122,7 +189,7 @@ export const registerChatRoutes = ({
       return res.status(503).json({ success: false, error: 'Server chat provider is not configured' });
     }
 
-    const { sessionId, parentId, content, useThinking } = req.body || {};
+    const { sessionId, parentId, content, useThinking, attachments } = req.body || {};
     if (!sessionId || !parentId || typeof content !== 'string') {
       return res.status(400).json({ success: false, error: 'sessionId, parentId, and content are required' });
     }
@@ -134,7 +201,7 @@ export const registerChatRoutes = ({
     const createdAt = Date.now();
 
     try {
-      const { state, history } = await stateStore.updateState(userId, (state) => {
+      const { state, history } = await stateStore.updateState(userId, async (state) => {
         const session = state.sessions[sessionId];
         if (!session) {
           throw new Error('Session not found');
@@ -145,7 +212,7 @@ export const registerChatRoutes = ({
           throw new Error('Parent node not found');
         }
 
-        const history = buildHistory(session.nodes, parentId);
+        const history = await buildHistory(session.nodes, parentId, attachmentStore, userId);
         const isFirstMessage = session.nodes[session.rootNodeId]?.childrenIds?.length === 0;
 
         session.nodes[userMessageId] = {
@@ -154,6 +221,7 @@ export const registerChatRoutes = ({
           childrenIds: [modelMessageId],
           role: 'user',
           content,
+          attachments: attachments || [],
           timestamp: createdAt,
         };
 
@@ -191,7 +259,7 @@ export const registerChatRoutes = ({
       };
 
       streamManager.createStream(metadata);
-      void startChatGeneration({ userId, streamId, sessionId, modelMessageId, history, prompt: content, enableThinking: Boolean(useThinking) });
+      void startChatGeneration({ userId, streamId, sessionId, modelMessageId, history, prompt: content, enableThinking: Boolean(useThinking), currentAttachments: attachments || [] });
 
       return res.status(202).json({
         success: true,

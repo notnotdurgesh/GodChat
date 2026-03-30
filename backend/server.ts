@@ -13,6 +13,8 @@ import { AuthRequest } from './src/serverTypes';
 import { CHAT_ROUTE_LOGS, registerChatRoutes } from './src/chatRoutes';
 import { TOOL_ROUTE_LOGS, registerToolRoutes } from './src/toolRoutes';
 import { SYSTEM_ROUTE_LOGS, registerSystemRoutes } from './src/systemRoutes';
+import { UPLOAD_ROUTE_LOGS, registerUploadRoutes } from './src/uploadRoutes';
+import { AttachmentStore } from './src/attachmentStore';
 
 const loadEnvFile = (filePath: string) => {
   if (!existsSync(filePath)) {
@@ -46,6 +48,7 @@ loadEnvFile(path.resolve(__dirname, '..', 'frontend', '.env'));
 const app = express();
 const PORT = Number(process.env.BACKEND_PORT || process.env.PORT || 5001);
 const stateStore = new ChatStateStore(process.env.MONGODB_URI, process.env.MONGODB_DB);
+const attachmentStore = new AttachmentStore(process.env.MONGODB_URI, process.env.MONGODB_DB);
 const authService = new AuthService(process.env.MONGODB_URI, process.env.MONGODB_DB);
 const streamManager = new StreamManager();
 const importProviders = new ImportProviders();
@@ -107,6 +110,12 @@ registerChatRoutes({
   app,
   stateStore,
   streamManager,
+  attachmentStore,
+});
+
+registerUploadRoutes({
+  app,
+  attachmentStore,
 });
 
 registerImportRoutes({
@@ -123,6 +132,7 @@ async function shutdown(): Promise<void> {
   await Promise.allSettled([
     importProviders.shutdown(),
     stateStore.shutdown(),
+    attachmentStore.shutdown(),
     authService.shutdown(),
   ]);
   process.exit(0);
@@ -130,6 +140,7 @@ async function shutdown(): Promise<void> {
 
 async function startServer(): Promise<void> {
   await stateStore.start();
+  await attachmentStore.start();
   await authService.start();
   await streamManager.start();
 
@@ -142,6 +153,7 @@ async function startServer(): Promise<void> {
       ...STATE_ROUTE_LOGS,
       ...CHAT_ROUTE_LOGS,
       ...IMPORT_ROUTE_LOGS,
+      ...UPLOAD_ROUTE_LOGS,
     ].forEach((route) => {
       console.log(route);
     });

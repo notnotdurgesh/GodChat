@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { Send, BrainCircuit } from 'lucide-react';
-import { ChatSession } from '../types';
+import { Send, BrainCircuit, Paperclip, X, FileText, Loader2 } from 'lucide-react';
+import { ChatSession, Attachment } from '../types';
 
 interface WelcomeDashboardProps {
-    onStartChat: (query: string) => void;
+    onStartChat: (query: string, attachments?: Attachment[]) => void;
     recentChats: ChatSession[];
     onSelectSession: (id: string) => void;
     formatTimeAgo: (ts: number) => string;
@@ -56,11 +56,63 @@ const WelcomeDashboard: React.FC<WelcomeDashboardProps> = ({
     const [isTyping, setIsTyping] = useState(true);
     const [showCursor, setShowCursor] = useState(true);
 
+    const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
+    const [isUploading, setIsUploading] = useState(false);
+    const [isDragOver, setIsDragOver] = useState(false);
+    const [uploadError, setUploadError] = useState<string | null>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
     // Viewport-proportional sizing — use larger dimension for desktop benefit
     const getScale = useCallback(() => {
         const base = Math.max(window.innerWidth, window.innerHeight);
         return Math.max(0.5, base / 1200);
     }, []);
+
+    const handleUpload = async (files: FileList | File[]) => {
+        setIsUploading(true);
+        setUploadError(null);
+        const formData = new FormData();
+        Array.from(files).forEach((f) => formData.append('files', f));
+        
+        try {
+            const res = await fetch('/api/chat/upload', {
+                method: 'POST',
+                credentials: 'include',
+                body: formData
+            });
+            const data = await res.json();
+            if (data.success) {
+                setPendingAttachments(prev => [...prev, ...data.data]);
+            } else {
+                setUploadError(data.error || 'Upload failed. Please try again.');
+                setTimeout(() => setUploadError(null), 4000);
+            }
+        } catch (err) {
+            console.error('[Upload Error]', err);
+            setUploadError('Upload failed. Please try again.');
+            setTimeout(() => setUploadError(null), 4000);
+        } finally {
+            setIsUploading(false);
+        }
+    };
+
+    const handleDragOver = (e: React.DragEvent) => {
+        e.preventDefault();
+        setIsDragOver(true);
+    };
+
+    const handleDragLeave = (e: React.DragEvent) => {
+        e.preventDefault();
+        setIsDragOver(false);
+    };
+
+    const handleDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        setIsDragOver(false);
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            handleUpload(e.dataTransfer.files);
+        }
+    };
 
     // --- Ripple spawn ---
     const spawnRipple = useCallback((x: number, y: number, intensity: number = 1) => {
@@ -264,8 +316,8 @@ const WelcomeDashboard: React.FC<WelcomeDashboardProps> = ({
 
     const handleSubmit = (e?: React.FormEvent) => {
         e?.preventDefault();
-        if (input.trim()) {
-            onStartChat(input.trim());
+        if (input.trim() || pendingAttachments.length > 0) {
+            onStartChat(input.trim(), pendingAttachments);
         }
     };
 
@@ -329,7 +381,61 @@ const WelcomeDashboard: React.FC<WelcomeDashboardProps> = ({
                     variants={itemVariants} 
                     className="w-full max-w-2xl relative mb-10 md:mb-16"
                 >
-                    <div className="relative flex flex-col p-2.5 sm:p-3 rounded-2xl border border-border bg-surface transition-colors duration-200 focus-within:border-accent-primary/40">
+                    <div 
+                        onDragOver={handleDragOver}
+                        onDragLeave={handleDragLeave}
+                        onDrop={handleDrop}
+                        className={`relative flex flex-col p-2.5 sm:p-3 rounded-2xl border transition-colors duration-200 focus-within:border-accent-primary/40 bg-surface ${isDragOver ? 'border-accent-primary bg-accent-primary/5 ring-2 ring-accent-primary/30' : 'border-border'}`}
+                    >
+                        
+                        {/* Pending Attachments UI */}
+                        {(pendingAttachments.length > 0 || isUploading) && (
+                            <div className="flex flex-wrap gap-2 mb-3 p-1">
+                                {pendingAttachments.map(att => (
+                                    <div key={att.id} className="relative group flex items-center gap-2 p-1.5 pr-2 bg-background border border-border rounded-xl shadow-sm text-xs animate-in zoom-in-95 duration-200">
+                                        {att.mimeType.startsWith('image/') ? (
+                                            <div className="w-8 h-8 rounded shrink-0 bg-black/5 dark:bg-white/5 overflow-hidden">
+                                                <img src={att.url} alt="preview" className="w-full h-full object-cover" />
+                                            </div>
+                                        ) : (
+                                            <div className="w-8 h-8 rounded shrink-0 bg-accent-primary/10 text-accent-primary flex items-center justify-center">
+                                                <FileText size={16} />
+                                            </div>
+                                        )}
+                                        <span className="truncate max-w-[120px] font-medium text-text-primary">{att.name}</span>
+                                        <button 
+                                            onClick={() => setPendingAttachments(prev => prev.filter(p => p.id !== att.id))} 
+                                            className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-surface border border-border flex items-center justify-center text-text-secondary hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                                        >
+                                            <X size={10} />
+                                        </button>
+                                    </div>
+                                ))}
+                                {isUploading && (
+                                    <div className="flex items-center gap-2 p-2 px-3 bg-background border border-border rounded-xl shadow-sm text-xs text-text-secondary animate-pulse">
+                                        <Loader2 size={14} className="animate-spin" />
+                                        <span>Uploading...</span>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                        {/* Upload Error Snackbar */}
+                        {uploadError && (
+                            <div className="flex items-center justify-between p-2.5 mb-2 bg-red-500/10 border border-red-500/30 rounded-xl shadow-sm animate-in slide-in-from-bottom-2 duration-200">
+                                <div className="flex items-center gap-3 overflow-hidden">
+                                    <div className="shrink-0 w-7 h-7 rounded-lg bg-red-500/20 flex items-center justify-center text-red-500">
+                                        <X size={14} />
+                                    </div>
+                                    <span className="text-xs text-red-600 dark:text-red-400 font-medium truncate">
+                                        ⚠ Upload failed — {uploadError}
+                                    </span>
+                                </div>
+                                <button onClick={() => setUploadError(null)} className="p-1 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-500/10 transition-colors shrink-0">
+                                    <X size={14} />
+                                </button>
+                            </div>
+                        )}
+
                         <textarea
                             value={input}
                             onChange={(e) => {
@@ -349,20 +455,40 @@ const WelcomeDashboard: React.FC<WelcomeDashboardProps> = ({
                         />
 
                         <div className="flex items-center justify-between px-2 pt-1">
-                            <button
-                                onClick={onToggleThinking}
-                                className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-all ${isThinkingEnabled ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400' : 'text-text-secondary hover:bg-black/5 dark:hover:bg-white/5'}`}
-                                title="Toggle Reasoning Model"
-                            >
-                                <BrainCircuit size={14} />
-                                <span>Reasoning {isThinkingEnabled ? 'On' : 'Off'}</span>
-                            </button>
+                            <div className="flex items-center gap-2">
+                                <input 
+                                    type="file" 
+                                    multiple 
+                                    className="hidden" 
+                                    ref={fileInputRef}
+                                    onChange={(e) => {
+                                        if (e.target.files && e.target.files.length > 0) {
+                                            handleUpload(e.target.files);
+                                        }
+                                    }}
+                                />
+                                <button
+                                    onClick={() => fileInputRef.current?.click()}
+                                    className="p-1.5 sm:p-2 rounded-xl text-text-secondary hover:text-text-primary hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+                                    title="Attach files"
+                                >
+                                    <Paperclip size={18} />
+                                </button>
+                                <button
+                                    onClick={onToggleThinking}
+                                    className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-all ${isThinkingEnabled ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400' : 'text-text-secondary hover:bg-black/5 dark:hover:bg-white/5'}`}
+                                    title="Toggle Reasoning Model"
+                                >
+                                    <BrainCircuit size={14} />
+                                    <span>Reasoning {isThinkingEnabled ? 'On' : 'Off'}</span>
+                                </button>
+                            </div>
                             <button
                                 onClick={handleSubmit}
-                                disabled={!input.trim()}
+                                disabled={!input.trim() && pendingAttachments.length === 0}
                                 className={`
                                     h-8 sm:h-9 px-4 sm:px-5 flex items-center justify-center rounded-xl transition-all duration-300 gap-2
-                                    ${!input.trim() 
+                                    ${(!input.trim() && pendingAttachments.length === 0) 
                                         ? 'bg-transparent text-text-secondary cursor-not-allowed opacity-40' 
                                         : 'bg-text-primary text-background hover:scale-105 hover:shadow-md'
                                     }

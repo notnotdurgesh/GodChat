@@ -1,10 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { MessageNode, Role } from '../types';
-import MarkdownRenderer from './MarkdownRenderer';
-import { GitBranch, Edit2, Check, Copy, Sparkles, GitFork, BrainCircuit, ChevronDown, ChevronRight, Loader2, MessageSquarePlus, Terminal, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
+import { MessageNode, Role, Attachment } from '../types';
+import MarkdownRenderer, { ImageWithPreview } from './MarkdownRenderer';
+import { GitBranch, Edit2, Check, Copy, Sparkles, GitFork, BrainCircuit, ChevronDown, ChevronRight, Loader2, MessageSquarePlus, Terminal, CheckCircle2, XCircle, AlertTriangle, FileText, X, Download, ExternalLink, Paperclip } from 'lucide-react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus, vscLightPlus } from './MarkdownRenderer';
 import { ThemeContext } from '../contexts/ThemeContext';
+import AttachmentPreviewArea from './AttachmentPreviewModal';
 
 const TOOL_FRIENDLY_NAMES: Record<string, string> = {
   'get_syntax_docs': 'Reading documentation',
@@ -19,7 +20,7 @@ const ToolCallBlock = ({ name, args, status, errorMessage }: { name: string, arg
 
   const friendlyName = TOOL_FRIENDLY_NAMES[name] || name;
   const displayName = status === 'running' ? `${friendlyName} . . .` :
-    status === 'success' ? `Used ${friendlyName}` :
+    status === 'success' ? `${friendlyName}` :
       `Failed ${friendlyName}`;
 
   // Auto-collapse on success, expand on error/running
@@ -87,7 +88,7 @@ interface ChatMessageProps {
   isHead: boolean;
   onBranch: (nodeId: string) => void;
   onQuote: (content: string, nodeId: string, shouldBranch?: boolean) => void;
-  onEdit: (nodeId: string, newContent: string) => void;
+  onEdit: (nodeId: string, newContent: string, attachments?: any[]) => void;
   onDelete?: (nodeId: string) => void;
   isActivePath: boolean;
   isEditing?: boolean;
@@ -125,8 +126,12 @@ const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, isHead, onBranch, o
 
   // Local state for the content being typed, but visibility is controlled by parent prop
   const [editContent, setEditContent] = useState(hydratedContent);
+  const [editAttachments, setEditAttachments] = useState<Attachment[]>(node.attachments || []);
   const [isCopied, setIsCopied] = useState(false);
   const [isThinkingExpanded, setIsThinkingExpanded] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Selection / Diverge State
   const [selectionRect, setSelectionRect] = useState<{ top: number, left: number } | null>(null);
@@ -164,15 +169,42 @@ const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, isHead, onBranch, o
   const time = new Date(node.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   const handleSaveEdit = () => {
-    if (editContent.trim() !== node.content) {
-      onEdit(node.id, editContent);
-    }
+    onEdit(node.id, editContent, editAttachments);
     setIsEditing?.(false);
   };
 
   const handleCancelEdit = () => {
     setIsEditing?.(false);
     setEditContent(node.content);
+    setEditAttachments(node.attachments || []);
+  };
+
+  const handleUpload = async (files: FileList | File[]) => {
+    setIsUploading(true);
+    setUploadError(null);
+    const formData = new FormData();
+    Array.from(files).forEach((f) => formData.append('files', f));
+
+    try {
+      const res = await fetch('/api/chat/upload', {
+        method: 'POST',
+        credentials: 'include',
+        body: formData
+      });
+      const data = await res.json();
+      if (data.success) {
+        setEditAttachments(prev => [...prev, ...data.data]);
+      } else {
+        setUploadError(data.error || 'Upload failed. Please try again.');
+        setTimeout(() => setUploadError(null), 4000);
+      }
+    } catch (err) {
+      console.error('[Upload Error]', err);
+      setUploadError('Upload failed. Please try again.');
+      setTimeout(() => setUploadError(null), 4000);
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   const handleCopyMessage = () => {
@@ -304,6 +336,7 @@ const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, isHead, onBranch, o
         // Look ahead for the result in the *next* parts 
         let status: 'running' | 'success' | 'error' = 'running';
         let errorMessage = undefined;
+        let diagramUrl: string | undefined = undefined;
 
         // Simple parser: check if the string immediately following this tag (in the original or next part) contains the result
         if (i + 1 < parts.length) {
@@ -312,6 +345,10 @@ const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, isHead, onBranch, o
             status = resultMatch[1] as 'success' | 'error' | 'success';
             if (status === 'error') {
               errorMessage = resultMatch[2];
+            } else if (status === 'success' && name === 'render_diagram' && resultMatch[2]) {
+              // The hydratedContent has already replaced the alias with the full mermaid.ink URL
+              const urlMatch = resultMatch[2].match(/https?:\/\/[^\s<"']+/);
+              if (urlMatch) diagramUrl = urlMatch[0];
             }
 
             // Consume the result tag
@@ -328,6 +365,15 @@ const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, isHead, onBranch, o
             errorMessage={errorMessage}
           />
         );
+
+        // Render diagram image inline immediately after the tool block
+        if (diagramUrl) {
+          components.push(
+            <div key={`diagram-${i}`} className="my-2">
+              <ImageWithPreview src={diagramUrl} alt="Generated Diagram" title="Generated Diagram" />
+            </div>
+          );
+        }
       } else {
         // It's normal text (or empty)
         // Handle suggestions stripping here or in main render
@@ -426,6 +472,11 @@ const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, isHead, onBranch, o
         {/* Content Container */}
         <div className={`flex flex-col min-w-0 flex-1 ${isUser ? 'items-end' : 'items-start'}`}>
 
+          {/* Attachments Area */}
+          {!isEditing && node.attachments && node.attachments.length > 0 && (
+            <AttachmentPreviewArea attachments={node.attachments} isUser={isUser} />
+          )}
+
           {/* Bubble / Text Area */}
           <div
             ref={contentRef}
@@ -440,29 +491,81 @@ const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, isHead, onBranch, o
 
             {isEditing ? (
               <div className="w-full min-w-[300px] bg-surface border border-amber-500/50 rounded-xl p-3 shadow-[0_0_15px_rgba(245,158,11,0.15)] ring-1 ring-amber-500/20 animate-in fade-in zoom-in-95 duration-200">
+                {(editAttachments.length > 0 || isUploading) && (
+                  <div className="mb-3">
+                    <div className="flex flex-wrap gap-2 p-1">
+                      {editAttachments.map((att: Attachment) => {
+                        const isImage = att.mimeType?.startsWith('image/');
+                        const isPdf = att.mimeType === 'application/pdf';
+                        const isExcel = att.mimeType?.includes('spreadsheet') || att.mimeType?.includes('excel');
+                        const isWord = att.mimeType?.includes('word') || att.mimeType?.includes('wordprocessing');
+                        const iconBg = isPdf ? 'bg-red-500/10 text-red-500' : isExcel ? 'bg-green-500/10 text-green-600' : isWord ? 'bg-blue-500/10 text-blue-500' : isImage ? 'bg-purple-500/10 text-purple-500' : 'bg-accent-primary/10 text-accent-primary';
+                        const label = isPdf ? 'PDF' : isExcel ? 'Excel' : isWord ? 'Word' : isImage ? 'Image' : 'Doc';
+                        return (
+                          <div key={att.id} className="relative flex items-center gap-2 p-1.5 pr-8 bg-background border border-border rounded-xl shadow-sm text-xs cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
+                            {isImage && att.url ? (
+                              <div className="w-9 h-9 rounded-lg shrink-0 overflow-hidden border border-border/50">
+                                <img src={att.url} alt="" className="w-full h-full object-cover" />
+                              </div>
+                            ) : (
+                              <div className={`w-9 h-9 rounded-lg shrink-0 flex items-center justify-center ${iconBg}`}>
+                                <FileText size={16} />
+                              </div>
+                            )}
+                            <div className="flex flex-col min-w-0">
+                              <span className="truncate max-w-[120px] font-medium text-text-primary leading-tight">{att.name}</span>
+                              <span className="text-[10px] text-text-secondary uppercase tracking-wide">{label}</span>
+                            </div>
+                            <button onClick={(e) => { e.stopPropagation(); setEditAttachments(prev => prev.filter(p => p.id !== att.id)); }} className="absolute top-1 right-1 w-5 h-5 rounded-full bg-surface border border-border flex items-center justify-center text-text-secondary hover:text-red-500 hover:border-red-500/30 hover:bg-red-500/10 transition-all shadow-sm" title="Remove"><X size={11} /></button>
+                          </div>
+                        );
+                      })}
+                      {isUploading && (
+                        <div className="flex items-center gap-2 p-2 px-3 bg-background border border-border rounded-xl shadow-sm text-xs text-text-secondary animate-pulse">
+                          <Loader2 size={14} className="animate-spin" />
+                          <span>Uploading...</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {uploadError && (
+                  <div className="flex items-center justify-between p-2 mb-2 bg-red-500/10 border border-red-500/30 rounded-lg">
+                    <span className="text-xs text-red-600 dark:text-red-400 font-medium">⚠ {uploadError}</span>
+                    <button onClick={() => setUploadError(null)} className="p-1 text-red-400 hover:text-red-600"><X size={14} /></button>
+                  </div>
+                )}
                 <textarea
                   value={editContent}
                   onChange={(e) => setEditContent(e.target.value)}
                   className="w-full bg-transparent border-none focus:ring-0 resize-none min-h-[100px] text-text-primary p-1 text-sm font-sans"
                 />
-                <div className="flex justify-end gap-2 mt-2">
-                  <button
-                    onClick={handleCancelEdit}
-                    className="px-3 py-1.5 rounded-lg text-xs font-medium bg-surface hover:bg-black/5 dark:hover:bg-white/5 text-text-secondary"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleSaveEdit}
-                    className="px-3 py-1.5 rounded-lg text-xs font-medium bg-accent-primary text-white hover:brightness-110"
-                  >
-                    Save & Branch
-                  </button>
+                <div className="flex justify-between items-center mt-2">
+                  <div className="flex items-center">
+                    <input type="file" ref={fileInputRef} className="hidden" multiple onChange={(e) => { if (e.target.files?.length) handleUpload(e.target.files); e.target.value = ''; }} />
+                    <button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="flex items-center justify-center w-8 h-8 text-text-secondary hover:text-accent-primary hover:bg-accent-primary/10 rounded-lg transition-colors disabled:opacity-50">
+                      <Paperclip size={16} />
+                    </button>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleCancelEdit}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium bg-surface hover:bg-black/5 dark:hover:bg-white/5 text-text-secondary"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSaveEdit}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium bg-accent-primary text-white hover:brightness-110"
+                    >
+                      Save & Branch
+                    </button>
+                  </div>
                 </div>
               </div>
             ) : (
-              <div className={`break-words ${isUser ? '' : 'w-full markdown-content'}`}>
-                {node?.isStreaming && !node.wasThinkingEnabled && (
+              <div className={`${isUser ? 'whitespace-pre-wrap' : 'w-full markdown-content'}`}>
+                {!isUser && node?.isStreaming && !node.wasThinkingEnabled && (
                   <div className="mb-2 group/think">
                     <div
                       className="flex items-center gap-2 py-1 select-none transition-opacity opacity-80 hover:opacity-100"
@@ -500,7 +603,12 @@ const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, isHead, onBranch, o
                   </div>
                 )}
 
-                {renderedContentComponents}
+                {/* User messages: plain text. AI messages: full markdown */}
+                {isUser ? (
+                  <span>{hydratedContent}</span>
+                ) : (
+                  renderedContentComponents
+                )}
               </div>
             )}
 

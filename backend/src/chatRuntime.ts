@@ -1,8 +1,9 @@
 import { Content, FunctionCallingConfigMode, GoogleGenAI, Part, Tool, Type } from '@google/genai';
 import { ChatSession, MessageNode } from './chatTypes';
 import { getConfigDocs, getSyntaxDocs, isMermaidToolsAvailable, renderDiagram, VALID_CONFIG_FILES, VALID_SYNTAX_FILES } from './mermaidTools';
+import { AttachmentStore } from './attachmentStore';
 
-const DEFAULT_MODEL = 'gemini-3-flash-preview';
+const DEFAULT_MODEL = 'gemini-3.1-flash-lite-preview';
 const DEFAULT_THINKING_MODEL = 'gemini-3-pro-preview';
 const SYSTEM_INSTRUCTION = `<role>
 You are Sam, an intelligence engine.
@@ -120,10 +121,12 @@ const getClient = (): GoogleGenAI => {
 export const isChatConfigured = (): boolean => Boolean(process.env.GEMINI_API_KEY);
 export const isMermaidConfigured = (): boolean => isMermaidToolsAvailable();
 
-export const buildHistory = (
+export const buildHistory = async (
   nodes: Record<string, MessageNode>,
   parentId: string | null,
-): Content[] => {
+  attachmentStore?: AttachmentStore,
+  userId?: string
+): Promise<Content[]> => {
   const history: Content[] = [];
   let currentId = parentId;
 
@@ -133,11 +136,68 @@ export const buildHistory = (
       break;
     }
 
+    const parts: Part[] = [];
+
+    if (node.attachments?.length && attachmentStore && userId) {
+      for (const att of node.attachments) {
+        try {
+          const dbAtt = await attachmentStore.getAttachment(att.id, userId);
+          if (!dbAtt) continue;
+
+          // Helper: normalise MongoDB BSON Binary → Node.js Buffer
+          const normalise = (raw: any): Buffer => {
+            if (Buffer.isBuffer(raw)) return raw;
+            if (raw && raw._bsontype === 'Binary') return Buffer.isBuffer(raw.buffer) ? raw.buffer : Buffer.from(raw.buffer);
+            if (raw instanceof Uint8Array) return Buffer.from(raw);
+            if (raw && typeof raw === 'object' && raw.buffer) return Buffer.from(raw.buffer);
+            if (raw && typeof raw.value === 'function') { const v = raw.value(); return Buffer.isBuffer(v) ? v : Buffer.from(v); }
+            return Buffer.from(raw);
+          };
+
+          if (att.mimeType?.startsWith('image/') && dbAtt.data) {
+            const buf = normalise(dbAtt.data);
+            // Validate image magic bytes
+            const valid = buf.length > 8 && (
+              (buf[0] === 0xFF && buf[1] === 0xD8) ||         // JPEG
+              (buf[0] === 0x89 && buf[1] === 0x50) ||         // PNG
+              (buf[0] === 0x47 && buf[1] === 0x49) ||         // GIF
+              (buf[0] === 0x52 && buf[1] === 0x49) ||         // WebP (RIFF)
+              (buf[0] === 0x42 && buf[1] === 0x4D)            // BMP
+            );
+            if (valid) {
+              parts.push({ inlineData: { mimeType: att.mimeType, data: buf.toString('base64') } });
+            } else {
+              parts.push({ text: `[Attached Image: ${att.name} — could not be processed]` });
+            }
+          } else if (att.mimeType === 'application/pdf' && dbAtt.data) {
+            const buf = normalise(dbAtt.data);
+            if (buf.length > 4 && buf.slice(0, 5).toString() === '%PDF-') {
+              parts.push({ inlineData: { mimeType: 'application/pdf', data: buf.toString('base64') } });
+            } else if (dbAtt.extractedText) {
+              parts.push({ text: `[Attached PDF: ${att.name}]\n\n${dbAtt.extractedText}` });
+            }
+          } else if (dbAtt.extractedText) {
+            parts.push({ text: `[Attached Document: ${att.name}]\n\n${dbAtt.extractedText}` });
+          } else {
+            parts.push({ text: `[Attached File: ${att.name} (${att.mimeType})]` });
+          }
+        } catch (e: any) {
+          console.warn(`[buildHistory] Failed to process attachment ${att.id}:`, e.message);
+        }
+      }
+    }
+
     const cleanContent = (node.content || '').replace(/<hidden_data[^>]*>.*?<\/hidden_data>/gs, '');
-    history.unshift({
-      role: node.role === 'user' ? 'user' : 'model',
-      parts: [{ text: cleanContent }],
-    });
+    if (cleanContent) {
+      parts.push({ text: cleanContent });
+    }
+
+    if (parts.length > 0) {
+      history.unshift({
+        role: node.role === 'user' ? 'user' : 'model',
+        parts,
+      });
+    }
 
     currentId = node.parentId;
   }
@@ -148,6 +208,7 @@ export const buildHistory = (
 interface RunChatGenerationOptions {
   history: Content[];
   prompt: string;
+  promptParts?: Part[];
   enableThinking: boolean;
   signal?: AbortSignal;
   onText: (text: string) => Promise<void> | void;
@@ -157,6 +218,7 @@ interface RunChatGenerationOptions {
 export const runChatGeneration = async ({
   history,
   prompt,
+  promptParts,
   enableThinking,
   signal,
   onText,
@@ -164,11 +226,16 @@ export const runChatGeneration = async ({
 }: RunChatGenerationOptions): Promise<void> => {
   const ai = getClient();
 
+  // Use multi-part user turn when attachments are present, otherwise plain text
+  const userParts: Part[] = promptParts && promptParts.length > 0
+    ? promptParts
+    : [{ text: prompt }];
+
   const currentHistory: Content[] = [
     ...history,
     {
       role: 'user',
-      parts: [{ text: prompt }],
+      parts: userParts,
     },
   ];
 
@@ -290,6 +357,6 @@ export const runChatGeneration = async ({
   }
 };
 
-export const getSessionHistory = (session: ChatSession, parentId: string | null): Content[] => {
-  return buildHistory(session.nodes, parentId);
+export const getSessionHistory = async (session: ChatSession, parentId: string | null, attachmentStore?: AttachmentStore, userId?: string): Promise<Content[]> => {
+  return buildHistory(session.nodes, parentId, attachmentStore, userId);
 };

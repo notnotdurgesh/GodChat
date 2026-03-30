@@ -1,5 +1,13 @@
 export type Role = 'user' | 'model' | 'system';
 
+export interface Attachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  url?: string;
+}
+
 export interface MessageNode {
   id: string;
   parentId: string | null;
@@ -10,6 +18,7 @@ export interface MessageNode {
   timestamp: number;
   isStreaming?: boolean;
   wasThinkingEnabled?: boolean;
+  attachments?: Attachment[];
   customLabel?: string;
   customColor?: string;
   customAlias?: string;

@@ -231,7 +231,7 @@ const CodeBlock = ({ inline, className, children, compact, isStatic, currentThem
   );
 };
 
-const ImageWithPreview = ({ src, alt, title }: { src: string, alt?: string, title?: string }) => {
+export const ImageWithPreview = ({ src, alt, title }: { src: string, alt?: string, title?: string }) => {
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
 
   // Zoom & Pan State

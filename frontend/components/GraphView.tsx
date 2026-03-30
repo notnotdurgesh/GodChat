@@ -43,6 +43,7 @@ interface TreeDatum {
   customColor?: string;
   visualOffset?: { x: number, y: number };
   isLoading?: boolean;
+  attachments?: any[];
 }
 
 interface EditNodeForm {
@@ -220,7 +221,8 @@ const GraphView: React.FC<GraphViewProps> = ({
           customLabel: node.customLabel,
           customColor: node.customColor,
           visualOffset: node.visualOffset,
-          isLoading: false
+          isLoading: false,
+          attachments: node.attachments,
         };
 
         node.childrenIds.forEach(childId => {
@@ -533,6 +535,12 @@ const GraphView: React.FC<GraphViewProps> = ({
                         ${renderedContent}
                       </div>
                     </div>
+                    ${(d.data.attachments && d.data.attachments.length > 0) ? `
+                        <div class="absolute bottom-2.5 left-2.5 flex items-center gap-1 bg-black/5 dark:bg-white/10 backdrop-blur-md px-1.5 py-0.5 rounded border border-border/50 text-text-secondary shadow-sm">
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="opacity-80"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                            <span class="text-[9.5px] font-bold tracking-wider leading-none mt-[1px]">${d.data.attachments.length}</span>
+                        </div>
+                    ` : ''}
                     ${d.data.isLoading ? `
                         <div class="absolute bottom-2 right-2 flex items-center gap-1.5 bg-background/80 backdrop-blur-sm px-2.5 py-1 rounded-full border border-border shadow-sm transition-all animate-in fade-in zoom-in-50">
                             <div class="animate-spin w-3.5 h-3.5 text-accent-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg></div>
@@ -783,6 +791,12 @@ const GraphView: React.FC<GraphViewProps> = ({
                         ${renderedContent}
                       </div>
                     </div>
+                    ${(d.data.attachments && d.data.attachments.length > 0) ? `
+                        <div class="absolute bottom-2.5 left-2.5 flex items-center gap-1 bg-black/5 dark:bg-white/10 backdrop-blur-md px-1.5 py-0.5 rounded border border-border/50 text-text-secondary shadow-sm">
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="opacity-80"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                            <span class="text-[9.5px] font-bold tracking-wider leading-none mt-[1px]">${d.data.attachments.length}</span>
+                        </div>
+                    ` : ''}
                     ${d.data.isLoading ? `
                         <div class="absolute bottom-2 right-2 flex items-center gap-1.5 bg-background/80 backdrop-blur-sm px-2.5 py-1 rounded-full border border-border shadow-sm transition-all animate-in fade-in zoom-in-50">
                             <div class="animate-spin w-3.5 h-3.5 text-accent-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg></div>

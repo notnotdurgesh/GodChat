@@ -4,6 +4,14 @@ export enum Role {
   SYSTEM = 'system'
 }
 
+export interface Attachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  url?: string;
+}
+
 export interface MessageNode {
   id: string;
   parentId: string | null;
@@ -14,6 +22,7 @@ export interface MessageNode {
   timestamp: number;
   isStreaming?: boolean;
   wasThinkingEnabled?: boolean;
+  attachments?: Attachment[];
 
   // Visual Customization
   customLabel?: string;

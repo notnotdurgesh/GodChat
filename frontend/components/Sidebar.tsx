@@ -458,7 +458,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         <div className="flex gap-2">
           <button
             onClick={onCreateSession}
-            className="flex-1 flex items-center justify-center gap-2 bg-text-primary text-background hover:scale-[1.02] active:scale-95 py-3 px-4 rounded-xl transition-all text-sm font-bold shadow-lg hover:shadow-xl"
+            className="flex-1 flex items-center justify-center gap-2 bg-text-primary text-background hover:scale-[1.02] active:scale-95 py-2 px-3  rounded-xl transition-all text-sm font-bold shadow-lg hover:shadow-xl"
           >
             <Plus size={18} strokeWidth={2.5} />
             <span>New Chat</span>

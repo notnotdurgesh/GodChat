@@ -169,7 +169,36 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
     let nodeId: string | null = session.lastActiveNodeId;
     while (nodeId) {
       if (streamIdsRef.current.has(nodeId)) {
-        void stopStreamsForNodeIds([nodeId]);
+        const stoppedNodeId = nodeId;
+        void stopStreamsForNodeIds([stoppedNodeId]).then(() => {
+          // Also immediately flip isStreaming=false on the node since SSE source is now closed
+          // and the server's 'stopped' event will never arrive at our closed EventSource
+          setState(prev => {
+            const sess = prev.currentSessionId ? prev.sessions[prev.currentSessionId] : null;
+            if (!sess) return prev;
+            const node = sess.nodes[stoppedNodeId];
+            if (!node || !node.isStreaming) return prev;
+            const suffix = '\n\n**[Stopped by User]**';
+            return {
+              ...prev,
+              sessions: {
+                ...prev.sessions,
+                [sess.id]: {
+                  ...sess,
+                  updatedAt: Date.now(),
+                  nodes: {
+                    ...sess.nodes,
+                    [stoppedNodeId]: {
+                      ...node,
+                      isStreaming: false,
+                      content: node.content.endsWith(suffix) ? node.content : `${node.content}${suffix}`,
+                    },
+                  },
+                },
+              },
+            };
+          });
+        });
         showSnackbarRef.current('Generation stopped', 'info', undefined, 1500);
         return;
       }
@@ -574,7 +603,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
     showSnackbar('New chat created', 'success');
   }, [navigate, showSnackbar, state.sessions]);
 
-  const handleStartNewChat = async (query: string) => {
+  const handleStartNewChat = async (query: string, attachments?: any[]) => {
     const rootId = uuidv4();
     const sessionId = uuidv4();
 
@@ -587,35 +616,42 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
       timestamp: Date.now()
     };
 
-    setState(prev => {
-      const minOrder = Object.values(prev.sessions).reduce((min, s) => Math.min(min, s.order || 0), 0);
+    const minOrder = Object.values(stateRef.current.sessions).reduce((min, s) => Math.min(min, s.order || 0), 0);
 
-      const newSession: ChatSession = {
-        id: sessionId,
-        title: query.length > 30 ? query.slice(0, 30) + '...' : query,
-        rootNodeId: rootId,
-        nodes: { [rootId]: rootNode },
-        notes: {
-          'infinite-tl': { id: 'infinite-tl', x: -500000, y: -500000, content: '.', resizeMode: 'AUTO', style: { fontSize: 'S', color: 'transparent' }, createdAt: Date.now() },
-          'infinite-br': { id: 'infinite-br', x: 500000, y: 500000, content: '.', resizeMode: 'AUTO', style: { fontSize: 'S', color: 'transparent' }, createdAt: Date.now() }
-        },
-        lastActiveNodeId: rootId,
-        updatedAt: Date.now(),
-        order: minOrder - 1000
-      };
+    const newSession: ChatSession = {
+      id: sessionId,
+      title: query.length > 30 ? query.slice(0, 30) + '...' : query,
+      rootNodeId: rootId,
+      nodes: { [rootId]: rootNode },
+      notes: {
+        'infinite-tl': { id: 'infinite-tl', x: -500000, y: -500000, content: '.', resizeMode: 'AUTO', style: { fontSize: 'S', color: 'transparent' }, createdAt: Date.now() },
+        'infinite-br': { id: 'infinite-br', x: 500000, y: 500000, content: '.', resizeMode: 'AUTO', style: { fontSize: 'S', color: 'transparent' }, createdAt: Date.now() }
+      },
+      lastActiveNodeId: rootId,
+      updatedAt: Date.now(),
+      order: minOrder - 1000
+    };
 
-      return {
-        ...prev,
-        sessions: { ...prev.sessions, [sessionId]: newSession },
-        currentSessionId: sessionId
-      };
-    });
+    const newFullState: ChatState = {
+      ...stateRef.current,
+      sessions: { ...stateRef.current.sessions, [sessionId]: newSession },
+      currentSessionId: sessionId
+    };
 
+    // Sync session to backend FIRST so createChatMessage can find it
+    try {
+      await saveChatState(newFullState);
+    } catch (e) {
+      console.error('Failed to pre-save new session', e);
+    }
+
+    setState(newFullState);
     navigate(`/chat/${sessionId}`);
     
-    // Trigger the flow
-    await generateFromNode(rootId, query, sessionId, isThinkingEnabled);
+    // Now safe to send message — backend has the session
+    await generateFromNode(rootId, query, sessionId, isThinkingEnabled, attachments);
   };
+
   
   const handleImportChat = useCallback((imported: ImportedChat) => {
     const { session } = convertToSession(imported);
@@ -694,7 +730,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
     });
   }, []);
 
-  const generateFromNode = async (parentId: string, inputContent: string, existingSessionId: string, useThinking: boolean) => {
+  const generateFromNode = async (parentId: string, inputContent: string, existingSessionId: string, useThinking: boolean, attachments?: any[]) => {
     shouldAutoScrollRef.current = true;
     scrollToBottom(true);
 
@@ -704,6 +740,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
         parentId,
         content: inputContent,
         useThinking,
+        attachments,
       });
 
       setState(result.state);
@@ -853,11 +890,11 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
     }
   };
 
-  const handleSendMessage = async (content?: string) => {
+  const handleSendMessage = async (content?: string, attachments?: any[]) => {
     // If called without content (e.g. via Enter in ChatInput), we assume ChatInput passed it. 
     const textToSend = content || '';
 
-    if ((!textToSend.trim() && !selectedContext) || !currentSession) return;
+    if ((!textToSend.trim() && !selectedContext && !(attachments && attachments.length > 0)) || !currentSession) return;
 
     // Prevent sending if the current leaf is ALREADY streaming
     const activeNode = currentSession.nodes[currentSession.lastActiveNodeId];
@@ -880,15 +917,15 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
 
     // Input clearing is handled by ChatInput component now.
 
-    await generateFromNode(currentSession.lastActiveNodeId, currentInput, currentSession.id, isThinkingEnabled);
+    await generateFromNode(currentSession.lastActiveNodeId, currentInput, currentSession.id, isThinkingEnabled, attachments);
   };
 
-  const handleEditMessage = async (nodeId: string, newContent: string) => {
+  const handleEditMessage = async (nodeId: string, newContent: string, attachments?: any[]) => {
     if (!currentSession) return;
     setEditingNodeId(null);
     const nodeToEdit = currentSession.nodes[nodeId];
     if (!nodeToEdit || !nodeToEdit.parentId) return;
-    await generateFromNode(nodeToEdit.parentId, newContent, currentSession.id, isThinkingEnabled);
+    await generateFromNode(nodeToEdit.parentId, newContent, currentSession.id, isThinkingEnabled, attachments);
   };
 
   const handleSuggestionClick = async (suggestion: string, nodeId: string) => {

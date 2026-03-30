@@ -189,6 +189,7 @@ export const createChatMessage = async (payload: {
   parentId: string;
   content: string;
   useThinking: boolean;
+  attachments?: any[];
 }): Promise<CreateChatMessageResponse> => {
   const response = await apiFetch('/api/chat/message', {
     method: 'POST',
@@ -208,7 +209,8 @@ export const stopChatStream = async (streamId: string): Promise<boolean> => {
 };
 
 export const openChatStream = (streamId: string, handlers: ChatStreamHandlers): EventSource => {
-  const source = new EventSource(`${API_BASE}/api/chat/streams/${streamId}`, { withCredentials: true });
+  const base = API_BASE || (typeof window !== 'undefined' ? window.location.origin : '');
+  const source = new EventSource(`${base}/api/chat/streams/${streamId}`, { withCredentials: true });
 
   source.addEventListener('text-delta', (event) => {
     handlers.onTextDelta(JSON.parse((event as MessageEvent).data) as TextDeltaEvent);
