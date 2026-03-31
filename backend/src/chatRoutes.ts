@@ -1,6 +1,6 @@
 import express from 'express';
 import { randomUUID } from 'node:crypto';
-import { buildHistory, isChatConfigured, runChatGeneration } from './chatRuntime';
+import { buildHistory, isChatConfigured, runChatGeneration, generateBranchLabel } from './chatRuntime';
 import { ChatStateStore } from './chatStateStore';
 import { StreamManager } from './streamManager';
 import { requireAuth } from './authHttp';
@@ -32,6 +32,7 @@ export const registerChatRoutes = ({
     prompt,
     enableThinking,
     currentAttachments,
+    backgroundTasks,
   }: {
     userId: string;
     streamId: string;
@@ -41,6 +42,7 @@ export const registerChatRoutes = ({
     prompt: string;
     enableThinking: boolean;
     currentAttachments?: any[];
+    backgroundTasks?: Promise<any>[];
   }): Promise<void> => {
     const abortController = new AbortController();
     streamManager.registerAbortController(streamId, abortController);
@@ -155,6 +157,10 @@ export const registerChatRoutes = ({
         session.updatedAt = Date.now();
       });
 
+      if (backgroundTasks && backgroundTasks.length > 0) {
+        await Promise.allSettled(backgroundTasks);
+      }
+
       streamManager.publish(streamId, 'done', { modelMessageId });
     } catch (error: any) {
       const stopped = abortController.signal.aborted;
@@ -201,7 +207,7 @@ export const registerChatRoutes = ({
     const createdAt = Date.now();
 
     try {
-      const { state, history } = await stateStore.updateState(userId, async (state) => {
+      const { state, history, isBranch } = await stateStore.updateState<{state: any, history: any[], isBranch: boolean}>(userId, async (state) => {
         const session = state.sessions[sessionId];
         if (!session) {
           throw new Error('Session not found');
@@ -214,6 +220,8 @@ export const registerChatRoutes = ({
 
         const history = await buildHistory(session.nodes, parentId, attachmentStore, userId);
         const isFirstMessage = session.nodes[session.rootNodeId]?.childrenIds?.length === 0;
+        const isBranch = parentNode.childrenIds.length > 0;
+        console.log(`[DEBUG] POST /api/chat/message - parentId: ${parentId}, parentNode.childrenIds.length: ${parentNode.childrenIds.length}, isBranch: ${isBranch}`);
 
         session.nodes[userMessageId] = {
           id: userMessageId,
@@ -246,7 +254,7 @@ export const registerChatRoutes = ({
         session.lastActiveNodeId = modelMessageId;
         session.updatedAt = Date.now();
 
-        return { state, history };
+        return { state, history, isBranch };
       });
 
       const metadata = {
@@ -259,8 +267,30 @@ export const registerChatRoutes = ({
       };
 
       streamManager.createStream(metadata);
-      void startChatGeneration({ userId, streamId, sessionId, modelMessageId, history, prompt: content, enableThinking: Boolean(useThinking), currentAttachments: attachments || [] });
+      
+      const backgroundTasks: Promise<any>[] = [];
 
+      // trigger silent intent summary if it was a branch
+      if (history.length > 0 && isBranch) {
+        console.log(`[DEBUG] Firing generateBranchLabel for stream: ${streamId}, userMessageId: ${userMessageId}`);
+        backgroundTasks.push(
+          generateBranchLabel(stateStore, userId, sessionId, userMessageId, modelMessageId, history, content, streamManager, streamId)
+        );
+      }
+
+      // trigger generation with background tasks ensuring stream stays alive
+      void startChatGeneration({ 
+        userId, 
+        streamId, 
+        sessionId, 
+        modelMessageId, 
+        history, 
+        prompt: content, 
+        enableThinking: Boolean(useThinking), 
+        currentAttachments: attachments || [],
+        backgroundTasks
+      });
+      
       return res.status(202).json({
         success: true,
         data: {

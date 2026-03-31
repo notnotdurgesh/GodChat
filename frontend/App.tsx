@@ -792,6 +792,33 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
             };
           });
         },
+        onBranchLabel: ({ userMessageId, label }) => {
+          console.log(`[DEBUG] Frontend received onBranchLabel SSE for userMessageId: ${userMessageId}, label: "${label}"`);
+          setState(prev => {
+            const session = prev.sessions[existingSessionId];
+            const node = session?.nodes?.[userMessageId];
+            if (!session || !node) {
+              console.warn(`[DEBUG] Frontend failed to find node ${userMessageId} to apply branchLabel!`);
+              return prev;
+            }
+
+            console.log(`[DEBUG] Frontend successfully updated state with branchLabel for node ${userMessageId}`);
+            return {
+              ...prev,
+              sessions: {
+                ...prev.sessions,
+                [existingSessionId]: {
+                  ...session,
+                  updatedAt: Date.now(),
+                  nodes: {
+                    ...session.nodes,
+                    [userMessageId]: { ...node, branchLabel: label },
+                  },
+                },
+              },
+            };
+          });
+        },
         onDone: ({ modelMessageId }) => {
           finalizeStreamTracking(result.streamId, modelMessageId);
           setState(prev => {

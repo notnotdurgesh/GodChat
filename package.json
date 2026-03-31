@@ -18,6 +18,8 @@
     "check:e2e": "node scripts/check-e2e.js"
   },
   "devDependencies": {
+    "@types/d3": "^7.4.3",
+    "@types/react-dom": "^19.2.3",
     "turbo": "^2.0.0"
   },
   "dependencies": {

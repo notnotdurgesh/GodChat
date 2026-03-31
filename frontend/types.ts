@@ -28,6 +28,7 @@ export interface MessageNode {
   customLabel?: string;
   customColor?: string; // hex or tailwind class
   customAlias?: string;
+  branchLabel?: string;
 
   // Visual Positioning (Relative offset from tree layout)
   visualOffset?: { x: number, y: number };

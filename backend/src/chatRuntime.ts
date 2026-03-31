@@ -360,3 +360,58 @@ export const runChatGeneration = async ({
 export const getSessionHistory = async (session: ChatSession, parentId: string | null, attachmentStore?: AttachmentStore, userId?: string): Promise<Content[]> => {
   return buildHistory(session.nodes, parentId, attachmentStore, userId);
 };
+
+export const generateBranchLabel = async (
+  stateStore: import('./chatStateStore').ChatStateStore,
+  userId: string,
+  sessionId: string,
+  userMessageId: string,
+  modelMessageId: string,
+  history: Content[],
+  prompt: string,
+  streamManager: import('./streamManager').StreamManager,
+  streamId: string
+): Promise<void> => {
+  try {
+    const ai = getClient();
+    console.log(`[DEBUG] generateBranchLabel initiated - userMessageId: ${userMessageId}`);
+    
+    const sysInstruction = `You are a background agent task assistant. Summarize the user's intent for diverging into this new conversational branch.
+Return ONLY a short, punchy 3-5 word title describing the new task or topic. No explanation, no quotes, no markdown. Just the raw text. Examples: "Debugging Nginx Config", "Refactoring UI Components"`;
+    
+    const branchContext: Content[] = [
+      ...history,
+      { role: 'user', parts: [{ text: prompt }] },
+    ];
+    
+    console.log(`[DEBUG] Calling gemini-3.1-flash-lite-preview for branch label...`);
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.1-flash-lite-preview',
+      contents: branchContext,
+      config: {
+        systemInstruction: sysInstruction,
+        temperature: 0.3,
+      }
+    });
+    
+    const label = response.text?.trim()?.replace(/^["']|["']$/g, '')?.replace(/\*+/g, '');
+    console.log(`[DEBUG] Branch label generated: "${label}"`);
+    
+    if (label) {
+      console.log(`[DEBUG] Saving branchLabel: "${label}" to stateStore for nodeId: ${userMessageId}`);
+      await stateStore.updateState(userId, (state) => {
+        const session = state.sessions[sessionId];
+        if (session && session.nodes[userMessageId]) {
+          session.nodes[userMessageId].branchLabel = label;
+          session.updatedAt = Date.now();
+        }
+      });
+      console.log(`[DEBUG] Publishing stream event 'branch-label' to streamId: ${streamId}`);
+      streamManager.publish(streamId, 'branch-label', { userMessageId, modelMessageId, label });
+    } else {
+      console.log(`[DEBUG] Branch label empty or generation failed to stringify`);
+    }
+  } catch (error) {
+    console.error('[Branch Labeling Error]', error);
+  }
+};

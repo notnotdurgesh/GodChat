@@ -73,9 +73,16 @@ interface TerminalEvent {
   message?: string;
 }
 
+interface BranchLabelEvent {
+  modelMessageId: string;
+  userMessageId: string;
+  label: string;
+}
+
 export interface ChatStreamHandlers {
   onTextDelta: (event: TextDeltaEvent) => void;
   onThoughtDelta: (event: ThoughtDeltaEvent) => void;
+  onBranchLabel?: (event: BranchLabelEvent) => void;
   onDone: (event: TerminalEvent) => void;
   onStopped: (event: TerminalEvent) => void;
   onGenerationError: (event: TerminalEvent) => void;
@@ -218,6 +225,10 @@ export const openChatStream = (streamId: string, handlers: ChatStreamHandlers): 
 
   source.addEventListener('thought-delta', (event) => {
     handlers.onThoughtDelta(JSON.parse((event as MessageEvent).data) as ThoughtDeltaEvent);
+  });
+
+  source.addEventListener('branch-label', (event) => {
+    handlers.onBranchLabel?.(JSON.parse((event as MessageEvent).data) as BranchLabelEvent);
   });
 
   source.addEventListener('done', (event) => {

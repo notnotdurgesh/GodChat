@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import * as d3 from 'd3';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { createPortal } from 'react-dom';
 import { MessageNode, Role, GraphNote } from '../types';
 import { GraphNoteComponent } from './GraphNote';
 import { GraphNoteEditorModal } from './GraphNoteEditorModal';
@@ -38,12 +37,17 @@ interface TreeDatum {
   content: string;
   timestamp: number;
   children?: TreeDatum[];
-  // Visuals
+  isLoading?: boolean;
   customLabel?: string;
   customColor?: string;
-  visualOffset?: { x: number, y: number };
-  isLoading?: boolean;
+  visualOffset?: { x: number; y: number };
   attachments?: any[];
+  isCollapsed?: boolean;
+  metrics?: {
+    totalDescendants: number;
+    maxChildDepth: number;
+  };
+  branchLabel?: string;
 }
 
 interface EditNodeForm {
@@ -90,6 +94,10 @@ const GraphView: React.FC<GraphViewProps> = ({
   const [filterText, setFilterText] = useState('');
   const [filterRole, setFilterRole] = useState<'ALL' | Role>('ALL');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+
+  // Branch Collapsing State
+  const [collapsedNodeIds, setCollapsedNodeIds] = useState<Set<string>>(new Set());
+  const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null);
 
   // Edit Mode State
   const [isEditMode, setIsEditMode] = useState(false);
@@ -204,13 +212,11 @@ const GraphView: React.FC<GraphViewProps> = ({
       if (!svgRef.current || !containerRef.current) return;
 
       // Define buildHierarchy inside the effect to avoid "accessed before declared" issues with recursive functions
-      const buildHierarchy = (currentId: string): TreeDatum | null => {
+      const buildHierarchy = (currentId: string, depth: number = 0): TreeDatum | null => {
         const node = nodes[currentId];
         if (!node) return null;
 
-        // If this node itself is streaming, we might want to hide it (based on parent logic), 
-        // but since we are calling this recursively, the parent decides whether to add it.
-        // However, if we are at the root and it's streaming (unlikely), we render it.
+        const isCollapsed = collapsedNodeIds.has(currentId);
 
         const datum: TreeDatum = {
           id: node.id,
@@ -223,28 +229,41 @@ const GraphView: React.FC<GraphViewProps> = ({
           visualOffset: node.visualOffset,
           isLoading: false,
           attachments: node.attachments,
+          branchLabel: node.branchLabel,
+          isCollapsed,
+          metrics: { totalDescendants: 0, maxChildDepth: depth }
         };
+
+        let totalDescendants = 0;
+        let maxChildDepth = depth;
 
         node.childrenIds.forEach(childId => {
           const childNode = nodes[childId];
           if (childNode) {
             if (childNode.isStreaming) {
-              // Mark current node as loading, do NOT add child to tree yet
               datum.isLoading = true;
             } else {
-              const childDatum = buildHierarchy(childId);
+              const childDatum = buildHierarchy(childId, depth + 1);
               if (childDatum) {
-                datum.children?.push(childDatum);
+                totalDescendants += (childDatum.metrics?.totalDescendants || 0) + 1;
+                maxChildDepth = Math.max(maxChildDepth, childDatum.metrics?.maxChildDepth || (depth + 1));
+                
+                // Only add to children array if NOT collapsed, otherwise they are hidden from Layout
+                if (!isCollapsed) {
+                  datum.children?.push(childDatum);
+                }
               }
             }
           }
         });
 
+        datum.metrics = { totalDescendants, maxChildDepth };
+
         if (datum.children?.length === 0) delete datum.children;
         return datum;
       };
 
-      const hierarchyData = buildHierarchy(rootId);
+      const hierarchyData = buildHierarchy(rootId, 0);
       if (!hierarchyData) return;
 
       const containerWidth = containerRef.current.clientWidth;
@@ -289,6 +308,27 @@ const GraphView: React.FC<GraphViewProps> = ({
           if (notesLayerRef.current) {
             notesLayerRef.current.style.transform = event.transform.toString();
           }
+
+          // Virtual Rendering (Culling)
+          if (containerRef.current) {
+            const { x, y, k } = event.transform;
+            const w = containerRef.current.clientWidth;
+            const h = containerRef.current.clientHeight;
+            // Padded bounds
+            const minX = -x/k - 500/k;
+            const maxX = (w - x)/k + 500/k;
+            const minY = -y/k - 300/k;
+            const maxY = (h - y)/k + 300/k;
+
+            nodeLayer.selectAll<SVGGElement, any>(".node").each(function(d) {
+              const isVisible = d.x >= minX && d.x <= maxX && d.y >= minY && d.y <= maxY;
+              if (isVisible) {
+                if (this.style.display === "none") this.style.display = "";
+              } else {
+                if (this.style.display !== "none") this.style.display = "none";
+              }
+            });
+          }
         });
 
       svg.call(zoom).on("dblclick.zoom", null);
@@ -323,6 +363,11 @@ const GraphView: React.FC<GraphViewProps> = ({
       // EXIT
       links.exit().transition().duration(500).attr("opacity", 0).remove();
 
+      // Custom Airline Route Curve Generator
+      const flightPath = d3.link(d3.curveBumpY)
+        .x((d: any) => d.x)
+        .y((d: any) => d.y);
+
       // ENTER
       const linksEnter = links.enter()
         .append("path")
@@ -330,11 +375,8 @@ const GraphView: React.FC<GraphViewProps> = ({
         .attr("fill", "none")
         .attr("opacity", 0)
         .attr("d", (d: any) => {
-          // Start from parent's position (collapsed)
           const o = { source: d.source, target: d.source };
-          return d3.linkVertical()
-            .x((n: any) => n.x)
-            .y((n: any) => n.y)(o as any);
+          return flightPath(o as any);
         });
 
       // UPDATE + ENTER Merge
@@ -348,7 +390,7 @@ const GraphView: React.FC<GraphViewProps> = ({
         })
         .attr("stroke-width", (d: any) => {
           const isReversed = d.target.y <= d.source.y;
-          return isReversed || activePathIds.has(d.target.data.id) ? 2.5 : 1.5;
+          return isReversed ? 2.5 : (activePathIds.has(d.target.data.id) ? 3.5 : 1.5);
         })
         .attr("stroke-dasharray", (d: any) => {
           const isReversed = d.target.y <= d.source.y;
@@ -356,12 +398,9 @@ const GraphView: React.FC<GraphViewProps> = ({
         })
         .attr("opacity", (d: any) => {
           const isReversed = d.target.y <= d.source.y;
-          return isReversed || activePathIds.has(d.target.data.id) ? 1 : 0.5;
+          return isReversed ? 1 : (activePathIds.has(d.target.data.id) ? 1 : 0.3);
         })
-        .attr("d", d3.linkVertical()
-          .x((d: any) => d.x)
-          .y((d: any) => d.y) as any
-        );
+        .attr("d", flightPath as any);
 
 
       // --- NODES (Morphing) ---
@@ -390,7 +429,8 @@ const GraphView: React.FC<GraphViewProps> = ({
         .attr("height", cardH)
         .attr("x", -cardW / 2)
         .attr("y", -cardH / 2)
-        .style("overflow", "visible");
+        .style("overflow", "visible")
+        .style("transition", "transform 0.3s ease, opacity 0.3s ease"); // LOD transition
 
       // UPDATE + ENTER Merge
       const nodesUpdate = nodesEnter.merge(nodesSelection as any);
@@ -453,19 +493,30 @@ const GraphView: React.FC<GraphViewProps> = ({
             : (isUser ? 'text-cyan-600 dark:text-cyan-400' : 'text-violet-600 dark:text-violet-400');
           const iconStyle = customColor ? `color: ${customColor}` : '';
 
-          let content = d.data.customLabel || d.data.content || (isUser ? 'Empty' : '...');
-          let summary = ''
+          const contentRaw = d.data.customLabel || d.data.content || (isUser ? 'Empty' : '...');
+          let content = contentRaw;
+          let summary = '';
+          const isExpanded = d.data.id === expandedNodeId;
+
           // Check for <summary> tag in content if not custom label
           if (!d.data.customLabel && !isUser && content) {
             const summaryMatch = content.match(/<summary[\s\S]*?>([\s\S]*?)(?:<\/summary>|$)/i);
+            
+            // Generate fully stripped version for expanded view to avoid raw XML tags
+            const strippedContent = content.replace(/<summary[\s\S]*?>[\s\S]*?<\/summary>/gi, '')
+              .replace(/<suggestions>[\s\S]*?<\/suggestions>/gi, '')
+              .replace(/<think>[\s\S]*?<\/think>/gi, '')
+              .replace(/<hidden_data[^>]*>.*?<\/hidden_data>/gsi, '');
+
             if (summaryMatch) {
               summary = summaryMatch[1].trim();
-              content = summary;
+              if (!isExpanded) {
+                content = summary;
+              } else {
+                content = strippedContent;
+              }
             } else {
-              // Remove known tags if no summary found, to show clean text
-              content = content.replace(/<suggestions>[\s\S]*?<\/suggestions>/g, '')
-                .replace(/<think>[\s\S]*?<\/think>/g, '')
-                .replace(/<hidden_data[^>]*>.*?<\/hidden_data>/gs, '');
+               content = strippedContent;
             }
           }
 
@@ -480,18 +531,17 @@ const GraphView: React.FC<GraphViewProps> = ({
 
             if (isToolCall || isToolResponse) {
               const toolNameMatch = content.match(/name="([^"]+)"/);
-              const toolName = toolNameMatch ? (isToolCall ? 'tool call' : 'tool response') : 'tool called';
-              const icon = isToolCall
-                ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>'
-                : '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="m21 15-9-7-9 7"/><path d="m21 8-9-7-9 7"/></svg>';
+              // Extract status from result if possible, though strict status tracking isn't in graph node data easily without parsing.
+              // We'll mimic the "Used Tool" style.
+              const toolName = toolNameMatch ? toolNameMatch[1] : (isToolCall ? 'tool_call' : 'tool_results');
 
-              const colorClass = isToolCall
-                ? 'bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400'
-                : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400';
+              // New Gradient Style
+              const gradientClass = "bg-clip-text text-transparent bg-gradient-to-r from-zinc-500 via-zinc-800 to-zinc-500 dark:from-zinc-400 dark:via-zinc-100 dark:to-zinc-400 bg-[length:200%_auto]";
 
-              renderedContent = `<div class="flex items-center gap-1.5 px-2 py-1 rounded border font-mono text-[10px] ${colorClass}">
-                ${icon}
-                <span class="truncate">${toolName}</span>
+              renderedContent = `<div class="flex items-center gap-2 py-1 select-none opacity-90">
+                <span class="text-sm font-medium ${gradientClass}">
+                   ${'Used ' + toolName}
+                </span>
               </div>`;
             } else {
               const cacheKey = d.data.id;
@@ -514,27 +564,42 @@ const GraphView: React.FC<GraphViewProps> = ({
           }
 
           return `
-               <div class="w-full h-full relative group flex items-center justify-center pointer-events-none">
+               <div class="w-full h-full relative group flex items-center justify-center pointer-events-none ${isExpanded ? 'z-50' : 'z-10'}" style="${isExpanded ? 'transform: translateY(' + (cardH*0.2) + 'px)' : ''}">
+                 
+                 <!-- Main Card -->
                  <div 
-                    class="pointer-events-auto w-[${cardInnerW}px] h-full rounded-lg border flex flex-col transition-all duration-300 backdrop-blur-md select-none relative overflow-hidden ${finalBg} ${finalBorder} ${finalShadow} ${opacity} ${dimming}"
+                    class="pointer-events-auto w-[${cardInnerW}px] ${isExpanded ? 'h-auto min-h-full z-50 shadow-2xl scale-[1.15]' : 'h-full'} rounded-lg border flex flex-col transition-all duration-300 backdrop-blur-md select-none relative overflow-visible ${finalBg} ${finalBorder} ${finalShadow} ${opacity} ${dimming}"
                     style="${bgStyle} ${borderStyle} ${shadowStyle}"
                  >
                     ${isEditMode ? `
                         <div class="absolute top-1 right-1 text-xs opacity-50"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></div>
                     `: ''}
 
-                    <div class="p-2.5 flex-1 flex items-start gap-2.5 overflow-hidden">
-                      <div class="shrink-0  ${!customColor ? iconColorClass : ''}" style="${iconStyle}">
+                    ${d.data.branchLabel ? `
+                        <div class="absolute -top-8 left-1/2 -translate-x-1/2 whitespace-nowrap z-[60] pointer-events-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] animate-in slide-in-from-bottom-2 fade-in duration-500">
+                           <span class="font-[cursive,'Comic_Sans_MS',sans-serif] text-[16px] font-bold tracking-wide text-zinc-200/90">${d.data.branchLabel}</span>
+                        </div>
+                    ` : ''}
+
+                    <div class="p-2.5 flex-1 flex items-start gap-2.5 ${isExpanded ? 'overflow-visible' : 'overflow-hidden'} [.graph-lod-mode_&]:pb-8 [.graph-lod-mode_&]:pt-3">
+                      <div class="shrink-0  ${!customColor ? iconColorClass : ''} [.graph-lod-mode_&]:scale-150 [.graph-lod-mode_&]:translate-x-2 [.graph-lod-mode_&]:translate-y-1 transition-all" style="${iconStyle}">
                         ${isUser
               ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>'
               : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2 2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>'
             }
                       </div>
 
-                      <div class="flex-1 overflow-hidden [&_p:first-child]:mt-0" style="display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; mask-image: linear-gradient(to bottom, black 85%, transparent 100%);">
+                      <div class="flex-1 ${isExpanded ? 'overflow-visible pb-8' : 'overflow-hidden'} [&_p:first-child]:mt-0 [.graph-lod-mode_&]:opacity-0 transition-opacity duration-300" style="${isExpanded ? '' : 'display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; mask-image: linear-gradient(to bottom, black 85%, transparent 100%);'}">
                         ${renderedContent}
                       </div>
                     </div>
+                    
+                    <!-- Expand/Collapse Button -->
+                    ${(!isEditMode && contentRaw.length > 80) ? `
+                        <div class="absolute bottom-1.5 right-1.5 z-[60] bg-surface/50 backdrop-blur-sm border border-border/50 text-text-secondary hover:text-text-primary px-2 py-0.5 rounded cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 shadow-sm font-semibold text-[9px] uppercase tracking-wider" data-expand-card-id="${d.data.id}">
+                            ${isExpanded ? 'Collapse' : 'Expand'}
+                        </div>
+                    ` : ''}
                     ${(d.data.attachments && d.data.attachments.length > 0) ? `
                         <div class="absolute bottom-2.5 left-2.5 flex items-center gap-1 bg-black/5 dark:bg-white/10 backdrop-blur-md px-1.5 py-0.5 rounded border border-border/50 text-text-secondary shadow-sm">
                             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="opacity-80"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
@@ -547,8 +612,23 @@ const GraphView: React.FC<GraphViewProps> = ({
                             <span class="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Generating</span>
                         </div>
                     ` : ''}
-                    ${isActive ? `<div class="absolute inset-0 rounded-lg border ${customColor ? '' : 'border-emerald-500/50'} pointer-events-none" style="${customColor ? 'border-color:' + customColor : ''}"></div>` : ''}
+                     ${isActive ? `<div class="absolute inset-0 rounded-lg border ${customColor ? '' : 'border-emerald-500/50'} pointer-events-none" style="${customColor ? 'border-color:' + customColor : ''}"></div>` : ''}
                  </div>
+
+                 <!-- Collapsed Indicator / Badge -->
+                 ${d.data.isCollapsed && d.data.metrics && d.data.metrics.totalDescendants > 0 ? `
+                   <div class="absolute -bottom-3 left-1/2 -translate-x-1/2 bg-surface backdrop-blur-md px-3 py-1 rounded-full border border-border shadow-lg flex items-center gap-2 pointer-events-auto cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-all text-text-secondary z-30" data-expand-id="${d.data.id}">
+                     <span class="text-[10px] font-bold"><span class="text-accent-primary">+${d.data.metrics.totalDescendants}</span> nodes</span>
+                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-text-secondary/70"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                   </div>
+                 ` : ''}
+
+                 <!-- Bottom Expand Hitbox (If not collapsed but has hidden/collapsible children) (optional) -->
+                 ${!d.data.isCollapsed && d.data.metrics && d.data.metrics.totalDescendants > 0 && !isActive ? `
+                   <div class="absolute -bottom-3 left-1/2 -translate-x-1/2 bg-surface/80 backdrop-blur-md w-6 h-6 rounded-full border border-border/50 shadow-sm flex items-center justify-center pointer-events-auto cursor-pointer opacity-0 group-hover:opacity-100 transition-all hover:bg-black/5 dark:hover:bg-white/5 text-text-secondary z-30" data-collapse-id="${d.data.id}" title="Collapse Branch">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>
+                   </div>
+                 ` : ''}
 
                  ${!isEditMode && d.data.id !== rootId ? `
                  <div class="absolute right-0.5 top-0 bottom-0 w-[30px] flex flex-col items-center justify-start gap-1.5 pt-0 pointer-events-auto opacity-0 group-hover:opacity-100 ${isActive ? 'opacity-100' : ''} transition-all duration-300">
@@ -570,6 +650,44 @@ const GraphView: React.FC<GraphViewProps> = ({
       nodesUpdate.on("click", (event, d) => {
         if (event.defaultPrevented) return; // Dragged
         event.stopPropagation();
+
+        // Handle Branch Expanding/Collapsing
+        const target = event.target as HTMLElement;
+        const expandBtn = target.closest('[data-expand-id]');
+        if (expandBtn) {
+          const id = expandBtn.getAttribute('data-expand-id');
+          if (id) {
+            setCollapsedNodeIds(prev => {
+              const next = new Set(prev);
+              next.delete(id);
+              return next;
+            });
+          }
+          return;
+        }
+
+        const collapseBtn = target.closest('[data-collapse-id]');
+        if (collapseBtn) {
+          const id = collapseBtn.getAttribute('data-collapse-id');
+          if (id) {
+            setCollapsedNodeIds(prev => {
+              const next = new Set(prev);
+              next.add(id);
+              return next;
+            });
+          }
+          return;
+        }
+
+        // Expand/Collapse Card Content
+        const expandCardBtn = target.closest('[data-expand-card-id]');
+        if (expandCardBtn) {
+          const id = expandCardBtn.getAttribute('data-expand-card-id');
+          if (id) {
+            setExpandedNodeId(prev => prev === id ? null : id);
+          }
+          return;
+        }
 
         // Branch Delete
         if (event.target.closest('.graph-delete-btn')) {
@@ -603,7 +721,7 @@ const GraphView: React.FC<GraphViewProps> = ({
 
         svg.transition()
           .duration(600)
-          .call(zoom.transform, d3.zoomIdentity.translate(x, y).scale(scale));
+          .call(zoom.transform as any, d3.zoomIdentity.translate(x, y).scale(scale));
       });
 
 
@@ -618,10 +736,7 @@ const GraphView: React.FC<GraphViewProps> = ({
             d.y += event.dy;
             d3.select(event.sourceEvent.target.closest("g")).attr("transform", `translate(${d.x},${d.y})`);
 
-            gLayer.selectAll<SVGPathElement, any>(".link").attr("d", d3.linkVertical()
-              .x((l: any) => l.x)
-              .y((l: any) => l.y) as any
-            )
+            gLayer.selectAll<SVGPathElement, any>(".link").attr("d", flightPath as any)
             .attr("stroke", (l: any) => {
               const isReversed = l.target.y <= l.source.y;
               if (isReversed) return '#ef4444';
@@ -637,191 +752,6 @@ const GraphView: React.FC<GraphViewProps> = ({
       } else {
         nodesUpdate.on(".drag", null);
       }
-
-      // Update Content
-      nodesUpdate.select("foreignObject")
-        .html((d: any) => {
-          const isActive = d.data.id === activeNodeId;
-          const isActivePath = activePathIds.has(d.data.id);
-          const isUser = d.data.role === Role.USER;
-
-          const matchesText = (d.data.customLabel || d.data.content).toLowerCase().includes(filterText.toLowerCase());
-          const matchesRole = filterRole === 'ALL' || d.data.role === filterRole;
-          const isDimmed = !(matchesText && matchesRole);
-
-          // --- Styling ---
-
-          // Custom color overrides
-          const customColor = d.data.customColor;
-          let bgStyle = '';
-          let borderStyle = '';
-          let shadowStyle = '';
-
-          if (customColor) {
-            // If custom color is a hex, use inline styles
-            // If it's a tailwind class, use class
-            // Assuming user might input hex mostly for "Perfect UI" feel
-            const isHex = customColor.startsWith('#') || customColor.startsWith('rgb');
-            if (isHex) {
-              bgStyle = `background: ${customColor}20; backdrop-filter: blur(12px);`; // 20% opacity
-              borderStyle = `border-color: ${customColor};`;
-              shadowStyle = isActive ? `box-shadow: 0 0 15px ${customColor}60;` : '';
-            } else {
-              // Fallback/Tailwind approach
-            }
-          }
-
-          // Standard Styles (Logic reused if no custom)
-          const baseBgClass = isUser
-            ? 'bg-cyan-50/90 dark:bg-cyan-950/40'
-            : 'bg-violet-50/90 dark:bg-violet-950/40';
-
-          const borderClass = isActive
-            ? 'border-emerald-500'
-            : (isUser ? 'border-cyan-200 dark:border-cyan-800/60' : 'border-violet-200 dark:border-violet-800/60');
-
-          const shadowClass = isActive
-            ? 'shadow-[0_0_15px_rgba(16,185,129,0.4)]'
-            : 'shadow-sm hover:shadow-md';
-
-          // Construct final strings
-          const finalBg = customColor ? '' : baseBgClass;
-          const finalBorder = customColor ? '' : borderClass;
-          const finalShadow = customColor ? '' : shadowClass;
-
-          const opacity = isActivePath ? 'opacity-100' : 'opacity-50 hover:opacity-100';
-          const dimming = isDimmed ? 'opacity-20 grayscale' : '';
-
-          const iconColorClass = isUser ? 'text-cyan-600 dark:text-cyan-400' : 'text-violet-600 dark:text-violet-400';
-          const iconStyle = customColor ? `color: ${customColor}` : '';
-
-          // Check for <summary> tag in content if not custom label
-          const contentRaw = d.data.customLabel || d.data.content || (isUser ? 'Empty' : '...');
-          let content = contentRaw;
-          let summary = '';
-
-          if (!d.data.customLabel && !isUser && content) {
-            const summaryMatch = content.match(/<summary[\s\S]*?>([\s\S]*?)(?:<\/summary>|$)/i);
-            if (summaryMatch) {
-              summary = summaryMatch[1].trim();
-              content = summary;
-            } else {
-              // Remove known tags if no summary found, to show clean text
-              content = content.replace(/<suggestions>[\s\S]*?<\/suggestions>/g, '')
-                .replace(/<think>[\s\S]*?<\/think>/g, '')
-                .replace(/<hidden_data[^>]*>.*?<\/hidden_data>/gs, '');
-            }
-          }
-          // Markdown or Plain Text
-          // If custom label, plain text usually. If content, markdown.
-          let renderedContent = '';
-          if (d.data.customLabel) {
-            renderedContent = `<div class="text-sm font-semibold truncate leading-tight">${d.data.customLabel}</div>
-                                    <div class="text-[10px] opacity-60 truncate">${d.data.id.slice(0, 8)}</div>`;
-          } else {
-            // Check for tool calls
-            const isToolCall = content.trim().startsWith('<function_call');
-            const isToolResponse = content.trim().startsWith('<function_results');
-
-            if (isToolCall || isToolResponse) {
-              const toolNameMatch = content.match(/name="([^"]+)"/);
-              // Extract status from result if possible, though strict status tracking isn't in graph node data easily without parsing.
-              // We'll mimic the "Used Tool" style.
-              const toolName = toolNameMatch ? toolNameMatch[1] : (isToolCall ? 'tool_call' : 'tool_results');
-
-              // New Gradient Style
-              const gradientClass = "bg-clip-text text-transparent bg-gradient-to-r from-zinc-500 via-zinc-800 to-zinc-500 dark:from-zinc-400 dark:via-zinc-100 dark:to-zinc-400 bg-[length:200%_auto]";
-
-              renderedContent = `<div class="flex items-center gap-2 py-1 select-none opacity-90">
-                <span class="text-sm font-medium ${gradientClass}">
-                   ${'Used ' + toolName}
-                </span>
-              </div>`;
-            } else {
-              // Check Cache
-              const cacheKey = d.data.id;
-              const cached = labelCacheRef.current.get(cacheKey);
-              // We must check if content OR theme changed.
-              // Note: theme object reference might change, so we might want to rely on a stable theme string if possible, 
-              // but for now checking strict equality of content string is the massive win.
-              // Theme context usually stable unless toggled.
-
-              // For theme, we can just assume if content matches it's likely fine unless we support dynamic theme switching mid-stream?
-              // Yes we do. But `theme` prop comes from hook. 
-              // Let's store theme.mode if available or just the theme object.
-
-              if (cached && cached.content === content && cached.theme === (theme as any)) {
-                renderedContent = cached.html;
-              } else {
-                try {
-                  renderedContent = renderToStaticMarkup(
-                    <MarkdownRenderer content={content} compact={true} isStatic={true} forcedTheme={theme} />
-                  );
-                  // Update Cache
-                  labelCacheRef.current.set(cacheKey, { content, theme: theme as any, html: renderedContent });
-                } catch (e) {
-                  void e;
-                  renderedContent = `<div class="text-[10px] pb-2 px-2">${content.replace(/</g, '&lt;')}</div>`;
-                }
-              }
-            }
-          }
-
-          return `
-               <div class="w-full h-full relative group flex items-center justify-center pointer-events-none">
-                 
-                 <!-- Main Card -->
-                 <div 
-                    class="pointer-events-auto w-[${cardInnerW}px] h-full rounded-lg border flex flex-col transition-all duration-300 backdrop-blur-md select-none relative overflow-hidden ${finalBg} ${finalBorder} ${finalShadow} ${opacity} ${dimming}"
-                    style="${bgStyle} ${borderStyle} ${shadowStyle}"
-                 >
-                    ${isEditMode ? `
-                        <div class="absolute top-1 right-1 text-xs opacity-50"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></div>
-                    `: ''}
-
-                    <!-- Content Row -->
-                    <div class="p-2.5 flex-1 flex items-start gap-2.5 overflow-hidden">
-                      <div class="shrink-0 ${!customColor ? iconColorClass : ''}" style="${iconStyle}">
-                        ${isUser
-              ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>'
-              : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2 2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>'
-            }
-                      </div>
-                      <div class="flex-1 overflow-hidden [&_p:first-child]:-mt-1" style="display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; mask-image: linear-gradient(to bottom, black 85%, transparent 100%);">
-                        ${renderedContent}
-                      </div>
-                    </div>
-                    ${(d.data.attachments && d.data.attachments.length > 0) ? `
-                        <div class="absolute bottom-2.5 left-2.5 flex items-center gap-1 bg-black/5 dark:bg-white/10 backdrop-blur-md px-1.5 py-0.5 rounded border border-border/50 text-text-secondary shadow-sm">
-                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="opacity-80"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-                            <span class="text-[9.5px] font-bold tracking-wider leading-none mt-[1px]">${d.data.attachments.length}</span>
-                        </div>
-                    ` : ''}
-                    ${d.data.isLoading ? `
-                        <div class="absolute bottom-2 right-2 flex items-center gap-1.5 bg-background/80 backdrop-blur-sm px-2.5 py-1 rounded-full border border-border shadow-sm transition-all animate-in fade-in zoom-in-50">
-                            <div class="animate-spin w-3.5 h-3.5 text-accent-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg></div>
-                            <span class="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Generating</span>
-                        </div>
-                    ` : ''}
-                    ${isActive ? `<div class="absolute inset-0 rounded-lg border ${customColor ? '' : 'border-emerald-500/50'} pointer-events-none" style="${customColor ? 'border-color:' + customColor : ''}"></div>` : ''}
-                 </div>
-
-                 <!-- Side Actions -->
-                 ${!isEditMode && d.data.id !== rootId ? `
-                 <div class="absolute right-0.5 top-0 bottom-0 w-[30px] flex flex-col items-center justify-start gap-1.5 pt-0 pointer-events-auto opacity-0 group-hover:opacity-100 ${isActive ? 'opacity-100' : ''} transition-all duration-300">
-                    <button class="graph-delete-btn p-1.5 rounded-full bg-white dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/50 hover:border-red-300 dark:hover:border-red-800 transition-all shadow-md hover:shadow-lg hover:scale-110 z-20" title="Delete Branch">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
-                    </button>
-                    
-                    <button class="graph-diverge-btn p-1.5 rounded-full bg-white dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 text-gray-400 hover:text-cyan-500 hover:bg-cyan-50 dark:hover:bg-cyan-950/50 hover:border-cyan-300 dark:hover:border-cyan-800 transition-all shadow-md hover:shadow-lg hover:scale-110 z-20" title="Diverge / Focus">
-                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>
-                    </button>
-                 </div>
-                 ` : ''}
-
-               </div>
-             `;
-        });
 
       // --- Centering Logic ---
       // User Request: Auto-focus active node on First Load and Session Change ("chat changes").
@@ -884,7 +814,7 @@ const GraphView: React.FC<GraphViewProps> = ({
 
     return () => clearTimeout(timerId);
 
-  }, [nodes, rootId, activeNodeId, filterText, filterRole, activePathIds, theme, isEditMode, onUpdateNode, handleDragEnd, onNodeClick, onDelete, focusTrigger]); // removed notes from dep to avoid full D3 re-render on note type
+  }, [nodes, rootId, activeNodeId, filterText, filterRole, activePathIds, theme, isEditMode, onUpdateNode, handleDragEnd, onNodeClick, onDelete, focusTrigger, collapsedNodeIds, expandedNodeId]); // added expandedNodeId
   // buildHierarchy is now defined inside the effect to avoid recursive useCallback issues
 
   // Keyboard Shortcuts (Delete)
@@ -917,6 +847,13 @@ const GraphView: React.FC<GraphViewProps> = ({
 
       // Apply Inverse Transform
       const [x, y] = currentZoomState.invert([rawX, rawY]);
+
+      // Handle Auto-Collapse on background click
+      if (expandedNodeId) {
+        setExpandedNodeId(null);
+        // Don't create a note if we were just clicking to collapse
+        return;
+      }
 
       const newId = uuidv4();
       onAddNote({
@@ -953,15 +890,15 @@ const GraphView: React.FC<GraphViewProps> = ({
   }, []);
 
   return (
-    <div
+      <div
       ref={containerRef}
-      className={`w-full h-full relative overflow-hidden bg-background touch-action-none ${activeTool === 'text' ? 'cursor-text' : ''}`}
+      className={`w-full h-full relative overflow-hidden bg-background touch-action-none ${activeTool === 'text' ? 'cursor-text' : ''} ${currentZoomState.k < 0.4 ? 'graph-lod-mode' : ''}`}
       onClick={handleCanvasClick}
     >
 
-      {/* Toolbar (Notes & Tools) */}
-      <div className={`absolute top-4 left-6 z-50 transition-all duration-300`}>
-        <div className={`bg-white/90 dark:bg-zinc-900/90 backdrop-blur-2xl p-1.5 rounded-2xl border border-gray-200/50 dark:border-zinc-800/50 shadow-[0_20px_50px_rgba(0,0,0,0.15)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.4)] flex ${containerWidth < 450 ? 'flex-row' : 'flex-col md:flex-col'} gap-1.5 transition-all duration-300 pointer-events-auto`}>
+      {/* Mobile-Optimized Bottom Sheet / Expandable Actions (Placeholder for full UI component) */}
+      <div className="absolute top-4 left-6 z-50 transition-all duration-300 pointer-events-none mb-safe">
+        <div className={`pointer-events-auto bg-white/90 dark:bg-zinc-900/90 backdrop-blur-2xl p-1.5 rounded-2xl border border-gray-200/50 dark:border-zinc-800/50 shadow-[0_20px_50px_rgba(0,0,0,0.15)] flex ${containerWidth < 500 ? 'flex-row' : 'flex-col md:flex-col'} gap-1.5 transition-all duration-300`}>
           <button
             onClick={() => setActiveTool('select')}
             className={`p-2.5 rounded-xl transition-all duration-200 active:scale-90 ${activeTool === 'select' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 border border-amber-200 dark:border-amber-700/50 shadow-sm' : 'text-text-secondary hover:bg-black/5 dark:hover:bg-white/5'}`}
@@ -978,7 +915,6 @@ const GraphView: React.FC<GraphViewProps> = ({
           </button>
         </div>
       </div>
-
 
       {/* Graph Note Editor Modal */}
       {activeNoteEditorId && notes[activeNoteEditorId] && (

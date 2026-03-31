@@ -23,6 +23,7 @@ export interface MessageNode {
   customColor?: string;
   customAlias?: string;
   visualOffset?: { x: number; y: number };
+  branchLabel?: string;
 }
 
 export type NoteResizeMode = 'AUTO' | 'FIXED';
