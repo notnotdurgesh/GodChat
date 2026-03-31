@@ -8,6 +8,7 @@
     "backend"
   ],
   "scripts": {
+    "prepare": "husky install",
     "dev": "node scripts/dev-runner.cjs",
     "dev:turbo": "docker compose up -d mongo && npx turbo run dev --filter=frontend --filter=backend",
     "db:up": "docker compose up -d mongo",
@@ -20,6 +21,7 @@
   "devDependencies": {
     "@types/d3": "^7.4.3",
     "@types/react-dom": "^19.2.3",
+    "husky": "^9.1.7",
     "turbo": "^2.0.0"
   },
   "dependencies": {
