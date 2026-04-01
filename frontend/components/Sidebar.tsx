@@ -20,6 +20,8 @@ interface SidebarProps {
   onOpenImport: () => void;
   currentUser: AuthenticatedUser;
   streamingSessionIds?: Set<string>;
+  demoMode: boolean;
+  sessionCount: number;
 }
 
 const areSidebarPropsEqual = (prev: SidebarProps, next: SidebarProps) => {
@@ -82,7 +84,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   onOpenSettings,
   onOpenImport,
   currentUser,
-  streamingSessionIds = new Set()
+  streamingSessionIds = new Set(),
+  demoMode,
+  sessionCount
 }) => {
   // --- State ---
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -458,10 +462,16 @@ const Sidebar: React.FC<SidebarProps> = ({
         <div className="flex gap-2">
           <button
             onClick={onCreateSession}
-            className="flex-1 flex items-center justify-center gap-2 bg-text-primary text-background hover:scale-[1.02] active:scale-95 py-2 px-3  rounded-xl transition-all text-sm font-bold shadow-lg hover:shadow-xl"
+            disabled={demoMode && sessionCount >= 2}
+            className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-xl transition-all text-sm font-bold shadow-lg 
+              ${(demoMode && sessionCount >= 2) 
+                ? 'bg-surface border border-border text-text-secondary cursor-not-allowed opacity-50 shadow-none' 
+                : 'bg-text-primary text-background hover:scale-[1.02] active:scale-95 hover:shadow-xl'
+              }`}
+            title={demoMode && sessionCount >= 2 ? "Session limit reached" : "New Chat"}
           >
             <Plus size={18} strokeWidth={2.5} />
-            <span>New Chat</span>
+            <span>{demoMode && sessionCount >= 2 ? 'Limit Reached' : 'New Chat'}</span>
           </button>
           <button
             onClick={() => onCreateFolder('New Folder')}

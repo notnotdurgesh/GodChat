@@ -101,7 +101,8 @@ export const registerAuthRoutes = ({
   app.post('/api/auth/signup', async (req, res) => {
     try {
       const { username, password } = req.body || {};
-      const { token, user } = await authService.signup(username, password);
+      const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() || req.socket.remoteAddress;
+      const { token, user } = await authService.signup(username, password, ip);
       setSessionCookie(res, token);
       await stateStore.getState(user.id);
       return res.status(201).json({ success: true, data: user });

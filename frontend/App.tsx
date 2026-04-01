@@ -546,6 +546,11 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
       return;
     }
 
+    if (backendConfig?.demoMode && Object.keys(state.sessions).length >= 2) {
+      showSnackbar('I am currently a student, so due to limited resources, chat history is limited to 2 sessions. Please delete a chat to start a new one.', 'warning');
+      return;
+    }
+
     const rootId = uuidv4();
     const sessionId = uuidv4();
 
@@ -742,6 +747,9 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
         useThinking,
         attachments,
       });
+
+      // Update user chat turns from response
+      onUserChange({ ...currentUser, chatTurns: result.chatTurns });
 
       setState(result.state);
       setActiveStreams(prev => new Set(prev).add(result.modelMessageId));
@@ -1466,6 +1474,8 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
           onOpenImport={() => setIsImportModalOpen(true)}
           currentUser={currentUser}
           streamingSessionIds={streamingSessionIds}
+          demoMode={backendConfig?.demoMode || false}
+          sessionCount={Object.keys(state.sessions).length}
         />
       </div>
 
@@ -1551,6 +1561,8 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
                   formatTimeAgo={formatTimeAgo}
                   isThinkingEnabled={isThinkingEnabled}
                   onToggleThinking={() => setIsThinkingEnabled(!isThinkingEnabled)}
+                  demoMode={backendConfig?.demoMode || false}
+                  sessionCount={Object.keys(state.sessions).length}
                 />
               </AnimatePresence>
             </div>
@@ -1566,6 +1578,20 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
               className="flex-1 overflow-y-auto custom-scrollbar"
             >
               <div className={`w-full ${isSidebarOpen ? 'max-w-3xl' : 'max-w-5xl'} transition-all duration-300 ease-in-out mx-auto py-8 px-4 flex flex-col gap-2`}>
+                {backendConfig?.demoMode && (
+                  <div className="mb-6 p-4 rounded-2xl bg-accent-primary/5 border border-accent-primary/10 flex items-start gap-4 animate-in fade-in slide-in-from-top-4 duration-500">
+                    <div className="w-10 h-10 rounded-full bg-accent-primary/10 flex items-center justify-center text-accent-primary shrink-0">
+                      <Sparkles size={20} />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <span className="text-sm font-bold text-text-primary">Demo Mode Active</span>
+                      <p className="text-xs text-text-secondary leading-relaxed">
+                        I am currently a student, so due to limited resources, chat usage is restricted to 5 messages per user. Thank you for your understanding, and sorry for the inconvenience.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 {threadPath.map((node, idx) => (
                   <ChatMessage
                     key={node.id}
@@ -1626,6 +1652,8 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
                   onToggleThinking={() => setIsThinkingEnabled(!isThinkingEnabled)}
                   onSendMessage={handleSendMessage}
                   onStop={handleStop}
+                  chatTurns={currentUser.chatTurns}
+                  demoMode={backendConfig?.demoMode || false}
                 />
               </div>
             </div>

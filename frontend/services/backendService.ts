@@ -24,6 +24,7 @@ export interface BackendConfig {
   mermaidConfigured: boolean;
   authEnabled: boolean;
   storageProvider: 'mongodb';
+  demoMode: boolean;
 }
 
 export interface AuthenticatedUser {
@@ -33,6 +34,8 @@ export interface AuthenticatedUser {
   lastSignedInAt: number;
   passwordUpdatedAt: number;
   currentSessionLastUsedAt?: number;
+  chatTurns: number;
+  registrationIp?: string;
 }
 export interface AccountExportData {
   exportedAt: string;
@@ -56,6 +59,7 @@ export interface CreateChatMessageResponse {
   modelMessageId: string;
   userMessageId: string;
   state: ChatState;
+  chatTurns: number;
 }
 
 interface TextDeltaEvent {

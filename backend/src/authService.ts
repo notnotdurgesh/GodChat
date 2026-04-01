@@ -11,6 +11,8 @@ interface UserRecord {
   createdAt: number;
   lastSignedInAt: number;
   passwordUpdatedAt: number;
+  chatTurns: number;
+  registrationIp?: string;
 }
 
 interface SessionRecord {
@@ -55,6 +57,8 @@ const mapUser = (record: UserRecord, sessionLastUsedAt?: number): AuthenticatedU
   lastSignedInAt: record.lastSignedInAt,
   passwordUpdatedAt: record.passwordUpdatedAt,
   currentSessionLastUsedAt: sessionLastUsedAt,
+  chatTurns: record.chatTurns || 0,
+  registrationIp: record.registrationIp,
 });
 
 export class AuthService {
@@ -84,8 +88,15 @@ export class AuthService {
     await this.client.close();
   }
 
-  async signup(username: string, password: string): Promise<{ token: string; user: AuthenticatedUser }> {
+  async signup(username: string, password: string, ip?: string): Promise<{ token: string; user: AuthenticatedUser }> {
     this.ensureStarted();
+
+    if (process.env.DEMO_MODE === 'true' && ip) {
+      const existingByIp = await this.users!.findOne({ registrationIp: ip });
+      if (existingByIp) {
+        throw new Error('An account already exists from this IP address during Demo Mode');
+      }
+    }
 
     const usernameError = validateUsername(username);
     if (usernameError) {
@@ -114,6 +125,8 @@ export class AuthService {
       createdAt: now,
       lastSignedInAt: now,
       passwordUpdatedAt: now,
+      chatTurns: 0,
+      registrationIp: ip,
     };
     user.passwordHash = hashPassword(password, user.passwordSalt);
 
@@ -276,6 +289,22 @@ export class AuthService {
     });
 
     return { token, user: mapUser(user, now) };
+  }
+
+  async incrementChatTurns(userId: string): Promise<number> {
+    this.ensureStarted();
+
+    const result = await this.users!.findOneAndUpdate(
+      { userId },
+      { $inc: { chatTurns: 1 } },
+      { returnDocument: 'after' },
+    );
+
+    if (!result) {
+      throw new Error('User not found');
+    }
+
+    return result.chatTurns;
   }
 
   private ensureStarted(): void {

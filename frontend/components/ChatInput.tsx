@@ -20,6 +20,8 @@ interface ChatInputProps {
     onToggleThinking: () => void;
     onSendMessage: (content: string, attachments?: Attachment[]) => void;
     onStop: () => void;
+    chatTurns: number;
+    demoMode: boolean;
 }
 
 const ChatInput: React.FC<ChatInputProps> = ({
@@ -39,6 +41,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
     onToggleThinking,
     onSendMessage,
     onStop,
+    chatTurns,
+    demoMode,
 }) => {
     const [input, setInput] = useState('');
     const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
@@ -124,6 +128,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
     };
 
     const handleSend = () => {
+        if (demoMode && chatTurns >= 10) return;
         if (!input.trim() && !selectedContext && pendingAttachments.length === 0) return;
         onSendMessage(input, pendingAttachments);
         setInput('');
@@ -334,9 +339,9 @@ const ChatInput: React.FC<ChatInputProps> = ({
                                 e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
                             }}
                             onKeyDown={handleKeyDown}
-                            placeholder={editingNodeId ? "Finish editing above..." : (isThinkingEnabled ? "Reason away  .  .  .  ." : (showDivergeUI ? "Branch from here..." : "Ask away  .  .  ."))}
+                            placeholder={demoMode && chatTurns >= 10 ? "Chat limit reached" : (editingNodeId ? "Finish editing above..." : (isThinkingEnabled ? "Reason away  .  .  .  ." : (showDivergeUI ? "Branch from here..." : "Ask away  .  .  ." )))}
                             className="w-full bg-transparent text-text-primary placeholder-text-secondary text-base focus:outline-none resize-none max-h-48 min-h-[44px] leading-relaxed disabled:opacity-50 disabled:cursor-not-allowed"
-                            disabled={!!editingNodeId}
+                            disabled={!!editingNodeId || (demoMode && chatTurns >= 10)}
                             rows={1}
                         />
 
@@ -354,7 +359,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
                                 />
                                 <button
                                     onClick={() => fileInputRef.current?.click()}
-                                    disabled={!!editingNodeId || isUploading}
+                                    disabled={!!editingNodeId || isUploading || (demoMode && chatTurns >= 10)}
                                     className="flex items-center justify-center w-8 h-8 text-text-secondary hover:text-text-primary hover:bg-black/5 dark:hover:bg-white/5 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                     title="Attach File"
                                 >
@@ -365,7 +370,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
                                     onClick={onToggleThinking}
                                     className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-all ${isThinkingEnabled ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400' : 'text-text-secondary hover:bg-black/5 dark:hover:bg-white/5'}`}
                                     title="Toggle Reasoning Model"
-                                    disabled={!!editingNodeId}
+                                    disabled={!!editingNodeId || (demoMode && chatTurns >= 10)}
                                 >
                                     <BrainCircuit size={14} />
                                     <span>Reasoning {isThinkingEnabled ? 'On' : 'Off'}</span>
@@ -394,6 +399,13 @@ const ChatInput: React.FC<ChatInputProps> = ({
                                     </>
                                 ) : (
                                     <>
+                                        {demoMode && (
+                                            <div className="flex flex-col items-end mr-1 mr-[-2px]">
+                                                <span className="text-[9px] leading-none opacity-70 group-hover:opacity-100 transition-opacity font-mono">
+                                                    {Math.max(0, 5 - chatTurns)} left
+                                                </span>
+                                            </div>
+                                        )}
                                         <span className="text-xs font-bold">Send</span>
                                         <Send size={14} />
                                     </>

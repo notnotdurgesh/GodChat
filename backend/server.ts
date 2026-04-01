@@ -129,6 +129,17 @@ app.put('/api/state', requireAuth, async (req: AuthRequest, res) => {
     return res.status(400).json({ success: false, error: 'state is required' });
   }
 
+  // Session limit enforcement for Demo Mode
+  if (process.env.DEMO_MODE === 'true' && state.sessions) {
+    const sessionCount = Object.keys(state.sessions).length;
+    if (sessionCount > 2) {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'I am currently a student, so due to limited resources, chat history is limited to 2 sessions. Please delete a chat to start a new one.' 
+      });
+    }
+  }
+
   await stateStore.replaceState(req.user!.id, state);
   return res.json({ success: true, data: await stateStore.getState(req.user!.id) });
 });
@@ -138,6 +149,7 @@ registerChatRoutes({
   stateStore,
   streamManager,
   attachmentStore,
+  authService,
 });
 
 registerUploadRoutes({

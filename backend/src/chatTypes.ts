@@ -85,6 +85,7 @@ export interface BackendStatus {
   mermaidConfigured: boolean;
   authEnabled: boolean;
   storageProvider: 'mongodb';
+  demoMode: boolean;
 }
 
 export interface AuthenticatedUser {
@@ -94,6 +95,8 @@ export interface AuthenticatedUser {
   lastSignedInAt: number;
   passwordUpdatedAt: number;
   currentSessionLastUsedAt?: number;
+  chatTurns: number;
+  registrationIp?: string;
 }
 
 export interface StreamEnvelope {

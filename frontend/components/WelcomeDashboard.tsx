@@ -10,6 +10,8 @@ interface WelcomeDashboardProps {
     formatTimeAgo: (ts: number) => string;
     isThinkingEnabled: boolean;
     onToggleThinking: () => void;
+    demoMode: boolean;
+    sessionCount: number;
 }
 
 const EXAMPLES = [
@@ -40,7 +42,9 @@ const WelcomeDashboard: React.FC<WelcomeDashboardProps> = ({
     onSelectSession,
     formatTimeAgo,
     isThinkingEnabled,
-    onToggleThinking
+    onToggleThinking,
+    demoMode,
+    sessionCount
 }) => {
     const [input, setInput] = useState('');
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -444,9 +448,10 @@ const WelcomeDashboard: React.FC<WelcomeDashboardProps> = ({
                                 e.target.style.height = Math.min(e.target.scrollHeight, 240) + 'px';
                             }}
                             onKeyDown={handleKeyDown}
-                            placeholder={input ? "" : (displayText + (showCursor ? '|' : ' '))}
-                            className="w-full bg-transparent text-text-primary placeholder-text-secondary/40 text-sm sm:text-base py-2.5 sm:py-3 px-4 sm:px-5 focus:outline-none resize-none min-h-[44px] sm:min-h-[52px] max-h-60 leading-relaxed"
+                            placeholder={demoMode && sessionCount >= 2 ? "Session limit reached. Delete a chat to start a new one." : (input ? "" : (displayText + (showCursor ? '|' : ' ')))}
+                            className="w-full bg-transparent text-text-primary placeholder-text-secondary/40 text-sm sm:text-base py-2.5 sm:py-3 px-4 sm:px-5 focus:outline-none resize-none min-h-[44px] sm:min-h-[52px] max-h-60 leading-relaxed disabled:opacity-50 disabled:cursor-not-allowed"
                             rows={1}
+                            disabled={demoMode && sessionCount >= 2}
                             onInput={(e) => {
                                 const target = e.target as HTMLTextAreaElement;
                                 target.style.height = 'auto';
@@ -488,7 +493,7 @@ const WelcomeDashboard: React.FC<WelcomeDashboardProps> = ({
                                 disabled={!input.trim() && pendingAttachments.length === 0}
                                 className={`
                                     h-8 sm:h-9 px-4 sm:px-5 flex items-center justify-center rounded-xl transition-all duration-300 gap-2
-                                    ${(!input.trim() && pendingAttachments.length === 0) 
+                                    ${((!input.trim() && pendingAttachments.length === 0) || (demoMode && sessionCount >= 2)) 
                                         ? 'bg-transparent text-text-secondary cursor-not-allowed opacity-40' 
                                         : 'bg-text-primary text-background hover:scale-105 hover:shadow-md'
                                     }

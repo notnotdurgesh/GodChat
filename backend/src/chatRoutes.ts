@@ -15,6 +15,7 @@ interface RegisterChatRoutesOptions {
   stateStore: ChatStateStore;
   streamManager: StreamManager;
   attachmentStore: import('./attachmentStore').AttachmentStore;
+  authService: import('./authService').AuthService;
 }
 
 export const registerChatRoutes = ({
@@ -22,6 +23,7 @@ export const registerChatRoutes = ({
   stateStore,
   streamManager,
   attachmentStore,
+  authService,
 }: RegisterChatRoutesOptions): void => {
   const startChatGeneration = async ({
     userId,
@@ -200,7 +202,15 @@ export const registerChatRoutes = ({
       return res.status(400).json({ success: false, error: 'sessionId, parentId, and content are required' });
     }
 
-    const userId = req.user!.id;
+    const user = req.user!;
+    if (process.env.DEMO_MODE === 'true' && (user.chatTurns || 0) >= 5) {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'I am currently a student, so due to limited resources, chat usage is restricted to 5 messages per user. Thank you for your understanding, and sorry for the inconvenience.' 
+      });
+    }
+
+    const userId = user.id;
     const streamId = randomUUID();
     const userMessageId = randomUUID();
     const modelMessageId = randomUUID();
@@ -291,6 +301,9 @@ export const registerChatRoutes = ({
         backgroundTasks
       });
       
+      // Increment chat turns
+      const updatedTurns = await authService.incrementChatTurns(userId);
+      
       return res.status(202).json({
         success: true,
         data: {
@@ -298,6 +311,7 @@ export const registerChatRoutes = ({
           modelMessageId,
           userMessageId,
           state,
+          chatTurns: updatedTurns,
         },
       });
     } catch (error: any) {

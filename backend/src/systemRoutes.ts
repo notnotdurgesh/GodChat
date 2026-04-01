@@ -23,6 +23,7 @@ export const registerSystemRoutes = ({
       mermaidConfigured: isMermaidConfigured(),
       authEnabled: true,
       storageProvider: 'mongodb',
+      demoMode: process.env.DEMO_MODE === 'true',
     };
 
     res.json({ success: true, data: status });
