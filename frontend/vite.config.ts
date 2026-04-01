@@ -6,7 +6,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
   const apiBase = env.VITE_BACKEND_URL || env.VITE_API_BASE || 'http://localhost:5001';
 
-  const clientApiBase = env.VITE_BACKEND_URL || '';
+  const clientApiBase = ''; // Force relative URLs for client so it uses the same origin (works for both Vite dev proxy and Nginx prod proxy)
 
   return {
     server: {

@@ -16,8 +16,6 @@ services:
       dockerfile: Dockerfile
     container_name: fschchat-backend
     restart: unless-stopped
-    ports:
-      - '5001:5001'
     environment:
       - PORT=5001
       - BACKEND_PORT=5001
@@ -25,6 +23,7 @@ services:
       - MONGODB_DB=fschchat
       - CORS_ORIGIN=*
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - DEMO_MODE=${DEMO_MODE:-true}
       # Override via .env or environment variables in production pipeline if needed
     healthcheck:
       test: ['CMD-SHELL', 'curl -f http://localhost:5001/api/health || exit 1']
