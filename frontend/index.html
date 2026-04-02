@@ -203,6 +203,28 @@
     .float-animation {
       animation: float 4s ease-in-out infinite;
     }
+
+    /* Print Styles for ExportModal */
+    @media print {
+      body * {
+        visibility: hidden;
+      }
+      .print-only-container, .print-only-container * {
+        visibility: visible;
+      }
+      .print-only-container {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        color: black;
+        background: white;
+      }
+      .print-content {
+        padding: 2em;
+        max-width: 100% !important;
+      }
+    }
   </style>
   <script type="importmap">
 {

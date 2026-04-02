@@ -10,7 +10,8 @@ import ChatInput from './components/ChatInput';
 const GraphView = lazy(() => import('./components/GraphView'));
 const SettingsModal = lazy(() => import('./components/SettingsModal'));
 const ImportModal = lazy(() => import('./components/ImportModal'));
-import { PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeft, Sun, Moon, Loader2, Quote, X, ArrowDown, GitFork, MessageSquarePlus, FastForward, CornerDownRight, Square, Plus, Sparkles, BrainCircuit } from 'lucide-react';
+import ExportModal from './components/ExportModal';
+import { PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeft, Sun, Moon, Loader2, Quote, X, ArrowDown, GitFork, MessageSquarePlus, FastForward, CornerDownRight, Square, Plus, Sparkles, BrainCircuit, Download } from 'lucide-react';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import { SnackbarProvider, useSnackbar } from './contexts/SnackbarContext';
 import { ImportedChat, convertToSession } from './services/importService';
@@ -41,6 +42,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
   const [isThinkingEnabled, setIsThinkingEnabled] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [graphFocusTrigger, setGraphFocusTrigger] = useState(0);
 
   // Suggestions Context Menu State
@@ -1513,6 +1515,16 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
 
           <div className="flex items-center gap-2">
 
+            {currentSession && (
+              <button
+                onClick={() => setIsExportModalOpen(true)}
+                className="p-2 rounded-lg text-text-secondary hover:bg-surface hover:text-text-primary transition-colors"
+                title="Export Chat"
+              >
+                <Download size={18} />
+              </button>
+            )}
+
             <button
               onClick={(e) => toggleTheme(e)}
               className="p-2 rounded-lg hover:bg-surface text-text-secondary hover:text-text-primary transition-colors"
@@ -1728,6 +1740,15 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
           isOpen={isImportModalOpen}
           onClose={() => setIsImportModalOpen(false)}
           onImport={handleImportChat}
+        />
+      </Suspense>
+
+      <Suspense fallback={null}>
+        <ExportModal
+          isOpen={isExportModalOpen}
+          onClose={() => setIsExportModalOpen(false)}
+          session={currentSession}
+          threadPath={threadPath}
         />
       </Suspense>
     </div>
