@@ -110,7 +110,7 @@ export const registerChatRoutes = ({
       }
       if (prompt) promptParts.push({ text: prompt });
 
-      await runChatGeneration({
+      const { tokenUsage } = await runChatGeneration({
         history,
         promptParts: promptParts.length > 0 ? promptParts : [{ text: prompt }],
         prompt,
@@ -154,6 +154,9 @@ export const registerChatRoutes = ({
         }
 
         modelNode.isStreaming = false;
+        if (tokenUsage) {
+          modelNode.tokenUsage = tokenUsage;
+        }
         session.updatedAt = Date.now();
       });
 
@@ -161,7 +164,7 @@ export const registerChatRoutes = ({
         await Promise.allSettled(backgroundTasks);
       }
 
-      streamManager.publish(streamId, 'done', { modelMessageId });
+      streamManager.publish(streamId, 'done', { modelMessageId, tokenUsage });
     } catch (error: any) {
       const stopped = abortController.signal.aborted;
       if (!stopped) {

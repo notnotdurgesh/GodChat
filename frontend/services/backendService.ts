@@ -71,6 +71,7 @@ interface ThoughtDeltaEvent {
 interface TerminalEvent {
   modelMessageId: string;
   message?: string;
+  tokenUsage?: import('../types').TokenUsage;
 }
 
 interface BranchLabelEvent {

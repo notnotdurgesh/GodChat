@@ -20,6 +20,8 @@ interface ChatInputProps {
     onToggleThinking: () => void;
     onSendMessage: (content: string, attachments?: Attachment[]) => void;
     onStop: () => void;
+    threadTokenUsage?: import('../../frontend/types').TokenUsage;
+    lastTokenUsage?: import('../../frontend/types').TokenUsage;
 }
 
 const ChatInput: React.FC<ChatInputProps> = ({
@@ -39,6 +41,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
     onToggleThinking,
     onSendMessage,
     onStop,
+    threadTokenUsage,
+    lastTokenUsage,
 }) => {
     const [input, setInput] = useState('');
     const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
@@ -142,7 +146,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
     return (
         <>
             <div className="p-4 bg-background z-20 shrink-0">
-                <div className={`mx-auto ${isSidebarOpen ? 'max-w-3xl' : 'max-w-5xl'} transition-all duration-300 ease-in-out relative`}>
+                <div className={`mx-auto ${isSidebarOpen ? 'max-w-4xl' : 'max-w-6xl'} transition-all duration-300 ease-in-out relative`}>
 
                     {/* Scroll To Bottom Button */}
                     {!isAtBottom && (
@@ -372,8 +376,11 @@ const ChatInput: React.FC<ChatInputProps> = ({
                                 </button>
                             </div>
 
-                            <button
-                                onClick={isCurrentPathStreaming ? onStop : handleSend}
+                            <div className="flex items-center gap-3">
+                                
+
+                                <button
+                                    onClick={isCurrentPathStreaming ? onStop : handleSend}
                                 disabled={(!input.trim() && !selectedContext && pendingAttachments.length === 0 && !isCurrentPathStreaming) || (!!editingNodeId && !isCurrentPathStreaming)}
                                 className={`
                                     h-9 px-4 flex items-center justify-center rounded-xl transition-all duration-300 gap-2 shadow-sm group
@@ -401,9 +408,47 @@ const ChatInput: React.FC<ChatInputProps> = ({
                             </button>
                         </div>
                     </div>
+                </div>
 
-                    <div className="text-center mt-2">
-                        <span className="text-[11px] text-text-secondary opacity-60">AI can make mistakes. Check important info.</span>
+                    <div className="flex items-center justify-between mt-2 px-1 relative">
+                        {/* Placeholder spacer for center alignment */}
+                        <div className="flex-[0.5]"></div>
+
+                        <div className="text-center flex-[2] z-10 pointer-events-none">
+                            <span className="text-[11px] text-text-secondary opacity-60">AI can make mistakes. Check important info.</span>
+                        </div>
+
+                        {/* Token Tracker pinned nicely to the bottom right under the input */}
+                        <div className="flex-[0.5] flex justify-end">
+                            {threadTokenUsage && threadTokenUsage.totalTokens > 0 && (
+                                <div 
+                                    className="relative flex items-center group/stats"
+                                >
+                                    <div className="flex items-center gap-1.5 px-1 py-1 rounded-full cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-all duration-300">
+                                        <div className="relative flex items-center justify-center w-[16px] h-[16px] shrink-0">
+                                            <svg className="w-full h-full transform -rotate-90 group-hover/stats:scale-105 transition-transform" viewBox="0 0 14 14">
+                                                <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="2" fill="transparent" className="opacity-20 text-text-secondary" />
+                                                <circle
+                                                    cx="7" cy="7" r="6"
+                                                    stroke="currentColor"
+                                                    strokeWidth="2"
+                                                    fill="transparent"
+                                                    strokeDasharray={2 * Math.PI * 6}
+                                                    strokeDashoffset={(2 * Math.PI * 6) - (Math.min((threadTokenUsage.totalTokens / 1000000), 1) * (2 * Math.PI * 6))}
+                                                    className="text-accent-primary transition-all duration-500 ease-out"
+                                                    strokeLinecap="round"
+                                                />
+                                            </svg>
+                                        </div>
+                                        <div className="overflow-hidden min-w-0 max-w-0 opacity-0 group-hover/stats:max-w-[40px] group-hover/stats:opacity-100 transition-all duration-500 ease-in-out text-right flex justify-end">
+                                            <span className="text-[11px] font-mono font-medium text-text-secondary whitespace-nowrap pl-0.5">
+                                                {((threadTokenUsage.totalTokens / 1000000) * 100).toFixed(1)}%
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </div>
             </div>

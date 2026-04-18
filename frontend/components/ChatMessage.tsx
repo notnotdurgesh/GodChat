@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { MessageNode, Role, Attachment } from '../types';
 import MarkdownRenderer, { ImageWithPreview } from './MarkdownRenderer';
-import { GitBranch, Edit2, Check, Copy, Sparkles, GitFork, BrainCircuit, ChevronDown, ChevronRight, Loader2, MessageSquarePlus, Terminal, CheckCircle2, XCircle, AlertTriangle, FileText, X, Download, ExternalLink, Paperclip, HelpCircle } from 'lucide-react';
+import { GitBranch, Edit2, Check, Copy, Sparkles, GitFork, BrainCircuit, ChevronDown, ChevronRight, Loader2, MessageSquarePlus, Terminal, CheckCircle2, XCircle, AlertTriangle, FileText, X, Download, ExternalLink, Paperclip, HelpCircle, ArrowUpCircle, ArrowDownCircle } from 'lucide-react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus, vscLightPlus } from './MarkdownRenderer';
 import { ThemeContext } from '../contexts/ThemeContext';
@@ -154,7 +154,7 @@ const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, sessionId, isHead, 
           chunks = newChunks;
         }
       });
-
+ 
       content = chunks.map(chunk => {
         if (chunk.isLink) {
           // Splitting by \n\n boundaries because markdown links cannot span across paragraphs
@@ -933,46 +933,65 @@ const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, sessionId, isHead, 
 
           {/* Action Bar (Below message) */}
           {!node.isStreaming && (
-            <div className={`flex items-center gap-2 mt-1.5 select-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
-              <span className="text-[10px] text-text-secondary/50 font-medium font-mono">{time}</span>
+            <div className={`flex items-center justify-between gap-4 mt-1.5 select-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
+              <div className={`flex items-center gap-2 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
+                <span className="text-[10px] text-text-secondary/50 font-medium font-mono">{time}</span>
 
-              {node.childrenIds.length > 0 && !isUser && (
+                {node.childrenIds.length > 0 && !isUser && (
+                  <button
+                    onClick={() => { /* Navigation logic handled by graph or parent */ }}
+                    className="flex items-center gap-1 text-xs text-text-secondary hover:text-accent-primary mr-2"
+                    title="This message has branches"
+                  >
+                    <GitBranch size={12} />
+                    <span>{node.childrenIds.length} alt</span>
+                  </button>
+                )}
+
                 <button
-                  onClick={() => { /* Navigation logic handled by graph or parent */ }}
-                  className="flex items-center gap-1 text-xs text-text-secondary hover:text-accent-primary mr-2"
-                  title="This message has branches"
-                >
-                  <GitBranch size={12} />
-                  <span>{node.childrenIds.length} alt</span>
-                </button>
-              )}
-
-              <button
-                onClick={handleCopyMessage}
-                className="p-1.5 rounded hover:bg-black/5 dark:hover:bg-white/5 text-text-secondary hover:text-text-primary transition-colors"
-                title="Copy"
-              >
-                {isCopied ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
-              </button>
-
-              {!isUser && !isHead && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); onBranch(node.id); }}
+                  onClick={handleCopyMessage}
                   className="p-1.5 rounded hover:bg-black/5 dark:hover:bg-white/5 text-text-secondary hover:text-text-primary transition-colors"
-                  title="Diverge / Branch from here"
+                  title="Copy"
                 >
-                  <GitFork size={14} />
+                  {isCopied ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
                 </button>
-              )}
 
-              {isUser && !isEditing && (
-                <button
-                  onClick={() => setIsEditing?.(true)}
-                  className="p-1.5 rounded hover:bg-black/5 dark:hover:bg-white/5 text-text-secondary hover:text-text-primary transition-colors"
-                  title="Edit"
-                >
-                  <Edit2 size={14} />
-                </button>
+                {!isUser && !isHead && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onBranch(node.id); }}
+                    className="p-1.5 rounded hover:bg-black/5 dark:hover:bg-white/5 text-text-secondary hover:text-text-primary transition-colors"
+                    title="Diverge / Branch from here"
+                  >
+                    <GitFork size={14} />
+                  </button>
+                )}
+
+                {isUser && !isEditing && (
+                  <button
+                    onClick={() => setIsEditing?.(true)}
+                    className="p-1.5 rounded hover:bg-black/5 dark:hover:bg-white/5 text-text-secondary hover:text-text-primary transition-colors pr-2"
+                    title="Edit and test variants"
+                  >
+                    <Edit2 size={13} />
+                  </button>
+                )}
+              </div>
+              
+              {!isUser && node.tokenUsage && (
+                <div className="flex items-center gap-2.5 px-1 ml-2 transition-all duration-300 cursor-default">
+                  <div className="flex items-center gap-1.5 text-[11px] text-emerald-600/80 dark:text-emerald-400/80 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors" title="Model Completion Output">
+                    <ArrowUpCircle size={13} className="shrink-0 opacity-90" />
+                    <span className="font-mono font-medium tracking-tight">
+                      {((node.tokenUsage.candidatesTokens / 1000000) * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[11px] text-zinc-500/80 dark:text-zinc-400/80 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors" title="Prompt Input Context">
+                    <ArrowDownCircle size={13} className="shrink-0 opacity-90" />
+                    <span className="font-mono font-medium tracking-tight">
+                      {((node.tokenUsage.promptTokens / 1000000) * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                </div>
               )}
             </div>
           )}

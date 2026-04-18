@@ -223,7 +223,7 @@ export const runChatGeneration = async ({
   signal,
   onText,
   onThought,
-}: RunChatGenerationOptions): Promise<void> => {
+}: RunChatGenerationOptions): Promise<{ tokenUsage?: import('./chatTypes').TokenUsage }> => {
   const ai = getClient();
 
   // Use multi-part user turn when attachments are present, otherwise plain text
@@ -241,6 +241,7 @@ export const runChatGeneration = async ({
 
   let turnCount = 0;
   const maxTurns = 5;
+  let finalTokenUsage: import('./chatTypes').TokenUsage | undefined = undefined;
 
   while (turnCount < maxTurns) {
     if (signal?.aborted) {
@@ -266,6 +267,15 @@ export const runChatGeneration = async ({
     for await (const chunk of resultStream) {
       if (signal?.aborted) {
         throw new Error('Aborted by user');
+      }
+
+      if ((chunk as any).usageMetadata) {
+        const metadata = (chunk as any).usageMetadata;
+        finalTokenUsage = {
+          promptTokens: metadata.promptTokenCount || 0,
+          candidatesTokens: metadata.candidatesTokenCount || 0,
+          totalTokens: metadata.totalTokenCount || 0,
+        };
       }
 
       const candidates = chunk.candidates || [];
@@ -302,7 +312,7 @@ export const runChatGeneration = async ({
     }
 
     if (!fullFunctionCall) {
-      return;
+      return { tokenUsage: finalTokenUsage };
     }
 
     const { name, args, thoughtSignature } = fullFunctionCall;
@@ -355,6 +365,8 @@ export const runChatGeneration = async ({
       ],
     });
   }
+
+  return { tokenUsage: finalTokenUsage };
 };
 
 export const getSessionHistory = async (session: ChatSession, parentId: string | null, attachmentStore?: AttachmentStore, userId?: string): Promise<Content[]> => {

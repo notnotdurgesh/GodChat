@@ -24,6 +24,12 @@ export interface Clarification {
   followUps?: ClarificationFollowUp[];
 }
 
+export interface TokenUsage {
+  promptTokens: number;
+  candidatesTokens: number;
+  totalTokens: number;
+}
+
 export interface MessageNode {
   id: string;
   parentId: string | null;
@@ -41,6 +47,7 @@ export interface MessageNode {
   customAlias?: string;
   visualOffset?: { x: number; y: number };
   branchLabel?: string;
+  tokenUsage?: TokenUsage;
 }
 
 export type NoteResizeMode = 'AUTO' | 'FIXED';

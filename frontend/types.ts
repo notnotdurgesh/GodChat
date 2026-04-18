@@ -28,6 +28,12 @@ export interface Clarification {
   followUps?: ClarificationFollowUp[];
 }
 
+export interface TokenUsage {
+  promptTokens: number;
+  candidatesTokens: number;
+  totalTokens: number;
+}
+
 export interface MessageNode {
   id: string;
   parentId: string | null;
@@ -40,6 +46,7 @@ export interface MessageNode {
   wasThinkingEnabled?: boolean;
   attachments?: Attachment[];
   clarifications?: Clarification[];
+  tokenUsage?: TokenUsage;
 
   // Visual Customization
   customLabel?: string;

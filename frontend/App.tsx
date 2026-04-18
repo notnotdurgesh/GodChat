@@ -115,9 +115,23 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
     return path;
   }, []);
 
-
   const currentSession = state.currentSessionId ? state.sessions[state.currentSessionId] : null;
   const threadPath = getThreadPath(currentSession);
+
+  // Compute thread tokens
+  const threadTokenUsage = React.useMemo(() => {
+    let promptTokens = 0;
+    let candidatesTokens = 0;
+    let totalTokens = 0;
+    for (const node of threadPath) {
+      if (node.tokenUsage) {
+        promptTokens += node.tokenUsage.promptTokens || 0;
+        candidatesTokens += node.tokenUsage.candidatesTokens || 0;
+        totalTokens += node.tokenUsage.totalTokens || 0;
+      }
+    }
+    return { promptTokens, candidatesTokens, totalTokens };
+  }, [threadPath]);
 
   // Check if any node in the current path is streaming
   const isCurrentPathStreaming = threadPath.some((node: MessageNode) => activeStreams.has(node.id));
@@ -846,7 +860,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
             };
           });
         },
-        onDone: ({ modelMessageId }) => {
+        onDone: ({ modelMessageId, tokenUsage }) => {
           finalizeStreamTracking(result.streamId, modelMessageId);
           setState(prev => {
             const session = prev.sessions[existingSessionId];
@@ -862,7 +876,11 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
                   updatedAt: Date.now(),
                   nodes: {
                     ...session.nodes,
-                    [modelMessageId]: { ...node, isStreaming: false },
+                    [modelMessageId]: { 
+                      ...node, 
+                      isStreaming: false,
+                      tokenUsage: tokenUsage || node.tokenUsage
+                    },
                   },
                 },
               },
@@ -1460,7 +1478,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
     ? lastMessage.content.match(/<suggestions>([\s\S]*?)(?:<\/suggestions>|$)/)
     : null;
   const currentSuggestions = suggestionsMatch
-    ? suggestionsMatch[1].split('\n').map(s => s.trim()).filter(s => s.length > 0)
+    ? suggestionsMatch[1].split('\n').map(s => s.trim().replace(/^(?:[-*]|\d+\.)\s*/, '')).filter(s => s.length > 0)
     : [];
 
   return (
@@ -1627,7 +1645,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
               onScroll={checkScrollPosition}
               className="flex-1 overflow-y-auto custom-scrollbar"
             >
-              <div className={`w-full ${isSidebarOpen ? 'max-w-3xl' : 'max-w-5xl'} transition-all duration-300 ease-in-out mx-auto py-8 px-4 flex flex-col gap-2`}>
+              <div className={`w-full ${isSidebarOpen ? 'max-w-4xl' : 'max-w-6xl'} transition-all duration-300 ease-in-out mx-auto py-8 px-4 flex flex-col gap-2`}>
                 {threadPath.map((node, idx) => (
                   <ChatMessage
                     key={node.id}
@@ -1668,7 +1686,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
 
             {/* Input Area */}
             <div className="p-4 bg-background z-20 shrink-0">
-              <div className={`mx-auto ${isSidebarOpen ? 'max-w-3xl' : 'max-w-5xl'} transition-all duration-300 ease-in-out relative`}>
+              <div className={`mx-auto ${isSidebarOpen ? 'max-w-4xl' : 'max-w-6xl'} transition-all duration-300 ease-in-out relative`}>
 
                 <ChatInput
                   isSidebarOpen={isSidebarOpen}
@@ -1690,6 +1708,8 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
                   onToggleThinking={() => setIsThinkingEnabled(!isThinkingEnabled)}
                   onSendMessage={handleSendMessage}
                   onStop={handleStop}
+                  threadTokenUsage={threadTokenUsage}
+                  lastTokenUsage={threadPath.length > 0 ? [...threadPath].reverse().find(n => n.tokenUsage)?.tokenUsage : undefined}
                 />
               </div>
             </div>
