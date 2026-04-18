@@ -1,6 +1,6 @@
 import express from 'express';
 import { randomUUID } from 'node:crypto';
-import { buildHistory, isChatConfigured, runChatGeneration, generateBranchLabel } from './chatRuntime';
+import { buildHistory, isChatConfigured, runChatGeneration, generateBranchLabel, generateClarification } from './chatRuntime';
 import { ChatStateStore } from './chatStateStore';
 import { StreamManager } from './streamManager';
 import { requireAuth } from './authHttp';
@@ -321,5 +321,70 @@ export const registerChatRoutes = ({
     const stopped = await streamManager.requestStop(req.params.streamId, req.user!.id);
     res.json({ success: true, data: { stopped } });
   });
+
+  app.post('/api/chat/:sessionId/nodes/:nodeId/clarify', requireAuth, async (req: AuthRequest, res) => {
+    if (!isChatConfigured()) {
+      return res.status(503).json({ success: false, error: 'Server chat provider is not configured' });
+    }
+
+    const { sessionId, nodeId } = req.params;
+    const { selectedText, question } = req.body || {};
+
+    if (!selectedText || !question) {
+      return res.status(400).json({ success: false, error: 'selectedText and question are required' });
+    }
+
+    const userId = req.user!.id;
+
+    try {
+      // 1) Read needed data to build history
+      const { history } = await stateStore.updateState<{history: any[]}>(userId, async (state) => {
+        const session = state.sessions[sessionId];
+        if (!session) throw new Error('Session not found');
+        const node = session.nodes[nodeId];
+        if (!node) throw new Error('Node not found');
+        
+        let historyToUse: any[];
+        if (node.role === 'model') {
+          // If the selected text was on a model node, its history ends at its parent user node,
+          // so we'll just use buildHistory from the user node and add the model node text to complete it
+          historyToUse = await buildHistory(session.nodes, node.parentId, attachmentStore, userId);
+          historyToUse.push({ role: 'model', parts: [{ text: node.content }] });
+        } else {
+          historyToUse = await buildHistory(session.nodes, nodeId, attachmentStore, userId);
+        }
+
+        return { history: historyToUse };
+      });
+
+      // 2) Generate Clarification
+      const answer = await generateClarification(history, selectedText, question);
+
+      const clarification = {
+        id: randomUUID(),
+        selectedText,
+        question,
+        answer,
+        timestamp: Date.now(),
+      };
+
+      // 3) Save clarification to the node
+      const { state } = await stateStore.updateState<{state: any}>(userId, async (state) => {
+        const session = state.sessions[sessionId];
+        const node = session.nodes[nodeId];
+        node.clarifications = node.clarifications || [];
+        node.clarifications.push(clarification);
+        session.updatedAt = Date.now();
+        return { state };
+      });
+
+      return res.json({ success: true, data: { clarification, state } });
+
+    } catch (error: any) {
+      console.error('[Clarification Error]', error);
+      return res.status(error.message?.includes('not found') ? 404 : 500).json({ success: false, error: error.message || 'Failed to generate clarification' });
+    }
+  });
+
 };
 

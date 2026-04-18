@@ -85,11 +85,13 @@ const ToolCallBlock = ({ name, args, status, errorMessage }: { name: string, arg
 
 interface ChatMessageProps {
   node: MessageNode;
+  sessionId?: string;
   isHead: boolean;
   onBranch: (nodeId: string) => void;
   onQuote: (content: string, nodeId: string, shouldBranch?: boolean) => void;
   onEdit: (nodeId: string, newContent: string, attachments?: any[]) => void;
   onDelete?: (nodeId: string) => void;
+  onClarify?: (nodeId: string, selectedText: string, question: string) => Promise<void>;
   isActivePath: boolean;
   isEditing?: boolean;
   setIsEditing?: (isEditing: boolean) => void;
@@ -98,7 +100,7 @@ interface ChatMessageProps {
   isAnyEditing?: boolean;
 }
 
-const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, isHead, onBranch, onQuote, onEdit, onDelete: _onDelete, isActivePath, isEditing = false, setIsEditing, isThinkingEnabled: _isThinkingEnabled, onSuggestionClick, isAnyEditing = false }) => {
+const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, sessionId, isHead, onBranch, onQuote, onEdit, onDelete: _onDelete, onClarify, isActivePath, isEditing = false, setIsEditing, isThinkingEnabled: _isThinkingEnabled, onSuggestionClick, isAnyEditing = false }) => {
   const isUser = node.role === Role.USER;
 
   // Hydrate content: Decode hidden artifacts and replace references
@@ -121,8 +123,54 @@ const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, isHead, onBranch, o
       content = content.split(alias).join(fullUrl);
     });
 
+    // Highlight clarified text (handle overlaps and multi-paragraphs flawlessly)
+    if (node.clarifications && node.clarifications.length > 0) {
+      type Chunk = { text: string; isLink: boolean; id: string };
+      let chunks: Chunk[] = [{ text: content, isLink: false, id: '' }];
+
+      // Sort by length descending so larger selections get priority and don't get broken by inner substrings
+      const sorted = [...node.clarifications].sort((a, b) => (b.selectedText?.length || 0) - (a.selectedText?.length || 0));
+
+      sorted.forEach(c => {
+        const sel = c.selectedText;
+        if (sel && sel.trim().length > 0) {
+          const newChunks: Chunk[] = [];
+          let replaced = false;
+          for (const chunk of chunks) {
+            if (replaced || chunk.isLink || !chunk.text.includes(sel)) {
+              newChunks.push(chunk);
+              continue;
+            }
+            // Replace ONLY the first occurrence in the eligible chunk
+            const idx = chunk.text.indexOf(sel);
+            const before = chunk.text.slice(0, idx);
+            const after = chunk.text.slice(idx + sel.length);
+
+            if (before) newChunks.push({ text: before, isLink: false, id: '' });
+            newChunks.push({ text: sel, isLink: true, id: c.id });
+            if (after) newChunks.push({ text: after, isLink: false, id: '' });
+            replaced = true;
+          }
+          chunks = newChunks;
+        }
+      });
+
+      content = chunks.map(chunk => {
+        if (chunk.isLink) {
+          // Splitting by \n\n boundaries because markdown links cannot span across paragraphs
+          const paragraphs = chunk.text.split(/(\n\n+)/);
+          return paragraphs.map(p => {
+            if (p.trim().length === 0) return p; // Preserve exact whitespace/newlines
+            const safeP = p.replace(/\[/g, '\\[').replace(/\]/g, '\\]');
+            return `[${safeP}](#clarify-${chunk.id})`;
+          }).join('');
+        }
+        return chunk.text;
+      }).join('');
+    }
+
     return content;
-  }, [node.content]);
+  }, [node.content, node.clarifications]);
 
   // Local state for the content being typed, but visibility is controlled by parent prop
   const [editContent, setEditContent] = useState(hydratedContent);
@@ -138,6 +186,25 @@ const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, isHead, onBranch, o
   const [activeSuggestion, setActiveSuggestion] = useState<string | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const messageRef = useRef<HTMLDivElement>(null);
+
+  // Clarification State
+  const [clarifyMode, setClarifyMode] = useState<{ top: number, left: number, text: string } | null>(null);
+  const [clarifyQuestion, setClarifyQuestion] = useState('');
+  const [isClarifying, setIsClarifying] = useState(false);
+  const [clarificationError, setClarificationError] = useState<string | null>(null);
+  const [activeClarificationId, setActiveClarificationId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handleClarifyClick = (e: Event) => {
+      const id = (e as CustomEvent).detail;
+      // Only set if this ID belongs to the current node
+      if (node.clarifications?.some(c => c.id === id)) {
+        setActiveClarificationId(prev => prev === id ? null : id);
+      }
+    };
+    window.addEventListener('clarify-click', handleClarifyClick);
+    return () => window.removeEventListener('clarify-click', handleClarifyClick);
+  }, [node.clarifications]);
 
   // Logic to handle thoughts (prefer native node.thought, fallback to <think> parsing)
   const nativeThought = node.thought;
@@ -215,16 +282,20 @@ const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, isHead, onBranch, o
 
   useEffect(() => {
     const handleSelection = () => {
-      if (!contentRef.current || !messageRef.current || isAnyEditing || isUser) {
+      // Do nothing globally if clarifying, we don't want to dismiss the clarify box from normal selections.
+      if (clarifyMode) {
+        return;
+      }
+
+      if (!contentRef.current || !messageRef.current || isAnyEditing) {
         setSelectionRect(null);
         return;
       }
 
       const selection = window.getSelection();
 
-      // If we have an active suggestion context menu, don't clear it on selection change unless clicking away
-      if (activeSuggestion) {
-        // This is handled by the document click listener usually, but we need to be careful
+      // If we have an active suggestion or clarification context menu open, don't clear it on text selection change
+      if (activeSuggestion || clarifyMode) {
         return;
       }
 
@@ -235,13 +306,24 @@ const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, isHead, onBranch, o
 
       // Check if selection is inside this message
       if (contentRef.current.contains(selection.anchorNode)) {
+        // Exclude selections inside the clarify box
+        const anchorElement = selection.anchorNode instanceof Element ? selection.anchorNode : selection.anchorNode?.parentElement;
+        if (anchorElement && anchorElement.closest('.clarify-box-content')) {
+          setSelectionRect(null);
+          return;
+        }
+
         const range = selection.getRangeAt(0);
         const rect = range.getBoundingClientRect();
         const parentRect = messageRef.current.getBoundingClientRect();
+        
+        let safeLeft = rect.left - parentRect.left + (rect.width / 2);
+        // Constrain left position so the popup doesn't overflow parent
+        safeLeft = Math.max(120, Math.min(safeLeft, parentRect.width - 150));
 
         setSelectionRect({
-          top: rect.top - parentRect.top - 44, // position above with a bit more offset
-          left: rect.left - parentRect.left + (rect.width / 2) - 35 // centered
+          top: Math.max(-10, rect.top - parentRect.top - 44), // prevent clipping top
+          left: safeLeft
         });
         setActiveSuggestion(null); // Clear suggestion focus
       }
@@ -256,18 +338,38 @@ const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, isHead, onBranch, o
         setSelectionRect(null);
         setActiveSuggestion(null);
       }
+      
+      // If clicking outside clarify mode popover, we might want to close it, 
+      // but only if it's not during interaction. A simpler approach is to rely 
+      // on the Esc key or 'X' button to prevent lost text. So we leave it open.
     };
 
     document.addEventListener('mouseup', handleSelection);
     document.addEventListener('selectionchange', handleSelection);
     document.addEventListener('click', handleGlobalClick);
 
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (clarifyMode) {
+          setClarifyMode(null);
+          setClarifyQuestion('');
+          setClarificationError(null);
+        }
+        if (activeSuggestion) {
+          setActiveSuggestion(null);
+          setSelectionRect(null);
+        }
+      }
+    };
+    document.addEventListener('keydown', handleEscape);
+
     return () => {
       document.removeEventListener('mouseup', handleSelection);
       document.removeEventListener('selectionchange', handleSelection);
       document.removeEventListener('click', handleGlobalClick);
+      document.removeEventListener('keydown', handleEscape);
     };
-  }, [activeSuggestion, isAnyEditing, isUser]);
+  }, [activeSuggestion, clarifyMode, isAnyEditing, isUser]);
 
   const handleSelectionAction = (e: React.MouseEvent, shouldBranch: boolean) => {
     e.stopPropagation();
@@ -428,7 +530,7 @@ const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, isHead, onBranch, o
       {/* Floating Selection Menu */}
       {selectionRect && (
         <div
-          style={{ top: selectionRect.top, left: selectionRect.left }}
+          style={{ top: selectionRect.top, left: selectionRect.left, transform: 'translateX(-50%)' }}
           className="absolute z-50 bg-surface border border-border shadow-lg rounded-lg p-1 animate-in fade-in zoom-in duration-200 pointer-events-auto flex gap-1"
         >
           {activeSuggestion ? (
@@ -449,6 +551,23 @@ const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, isHead, onBranch, o
                 <MessageSquarePlus size={14} className="text-accent-primary" />
                 Ask
               </button>
+              <div className="w-px bg-border my-1" />
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const selectedText = window.getSelection()?.toString() || '';
+                  if (selectedText && selectionRect) {
+                    setClarifyMode({ ...selectionRect, text: selectedText });
+                  }
+                  setSelectionRect(null);
+                  setActiveSuggestion(null);
+                }}
+                className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-text-primary hover:bg-black/5 dark:hover:bg-white/10 rounded transition-colors"
+                title="Get an inline AI clarification for this text"
+              >
+                <BrainCircuit size={14} className="text-accent-primary" />
+                Clarify
+              </button>
               {!isHead && (
                 <>
                   <div className="w-px bg-border my-1" />
@@ -463,6 +582,89 @@ const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, isHead, onBranch, o
                 </>
               )}
             </>
+          )}
+        </div>
+      )}
+
+      {/* Clarification Input Popover */}
+      {clarifyMode && (
+        <div
+          style={{ top: clarifyMode.top, left: clarifyMode.left, transform: 'translateX(-50%)' }}
+          className="absolute z-50 bg-surface border border-border shadow-xl rounded-lg p-3 animate-in fade-in zoom-in duration-200 pointer-events-auto flex flex-col gap-2 min-w-[250px] sm:min-w-[300px] max-w-[80vw]"
+        >
+          <div className="text-[0.8rem] font-medium text-text-secondary w-full border-l-2 border-accent-primary pl-2 italic overflow-hidden" style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+            "{clarifyMode.text}"
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={clarifyQuestion}
+              onChange={(e) => setClarifyQuestion(e.target.value)}
+              onKeyDown={async (e) => {
+                if (e.key === 'Escape') {
+                  setClarifyMode(null);
+                  setClarifyQuestion('');
+                  setClarificationError(null);
+                } else if (e.key === 'Enter' && clarifyQuestion.trim() && !isClarifying) {
+                  setIsClarifying(true);
+                  setClarificationError(null);
+                  try {
+                    if (onClarify) {
+                      await onClarify(node.id, clarifyMode.text, clarifyQuestion.trim());
+                      setClarifyMode(null);
+                      setClarifyQuestion('');
+                    } else {
+                      setClarificationError("Clarify callback missing");
+                    }
+                  } catch (err: any) {
+                    setClarificationError(err.message || 'Failed to clarify');
+                  } finally {
+                    setIsClarifying(false);
+                  }
+                }
+              }}
+              placeholder="Ask for clarification..."
+              className="flex-1 bg-background text-text-primary text-sm px-3 py-1.5 rounded-md outline-none border border-border focus:border-accent-primary transition-colors"
+              autoFocus
+            />
+            <button
+              onClick={async () => {
+                 if (clarifyQuestion.trim() && !isClarifying) {
+                   setIsClarifying(true);
+                   setClarificationError(null);
+                   try {
+                     if (onClarify) {
+                       await onClarify(node.id, clarifyMode.text, clarifyQuestion.trim());
+                       setClarifyMode(null);
+                       setClarifyQuestion('');
+                     } else {
+                       setClarificationError("Clarify callback missing");
+                     }
+                   } catch (err: any) {
+                     setClarificationError(err.message || 'Failed to clarify');
+                   } finally {
+                     setIsClarifying(false);
+                   }
+                 }
+              }}
+              disabled={!clarifyQuestion.trim() || isClarifying}
+              className="p-1.5 bg-accent-primary hover:bg-accent-secondary disabled:opacity-50 text-white rounded-md transition-colors"
+            >
+              {isClarifying ? <Loader2 size={16} className="animate-spin" /> : <ChevronRight size={16} />}
+            </button>
+            <button
+              onClick={() => {
+                setClarifyMode(null);
+                setClarifyQuestion('');
+                setClarificationError(null);
+              }}
+              className="p-1.5 text-text-secondary hover:text-red-500 transition-colors"
+            >
+              <X size={16} />
+            </button>
+          </div>
+          {clarificationError && (
+             <div className="text-xs text-red-500 mt-1">{clarificationError}</div>
           )}
         </div>
       )}
@@ -608,6 +810,38 @@ const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, isHead, onBranch, o
                   <span>{hydratedContent}</span>
                 ) : (
                   renderedContentComponents
+                )}
+
+                {/* Inline Clarifications display */}
+                {node.clarifications && activeClarificationId && (
+                  (() => {
+                    const clarification = node.clarifications.find(c => c.id === activeClarificationId);
+                    if (!clarification) return null;
+                    return (
+                      <div className="mt-4 flex flex-col gap-3 border-t border-border pt-4 animate-in slide-in-from-top-2 fade-in duration-300 clarify-box-content">
+                        <div className="text-sm bg-black/5 dark:bg-white/5 rounded-xl px-4 py-3 flex flex-col gap-2 relative shadow-sm border border-border">
+                          <button 
+                            onClick={() => setActiveClarificationId(null)}
+                            className="absolute top-2 right-2 p-1 text-text-secondary hover:bg-black/10 dark:hover:bg-white/10 rounded transition-colors"
+                          >
+                            <X size={14} />
+                          </button>
+                          <div className="flex items-start gap-2 pr-6">
+                            <div className="w-1.5 h-3 mt-1.5 bg-accent-primary rounded-full shrink-0" />
+                            <div className="flex-1 font-medium text-text-primary text-[0.95rem]">
+                              {clarification.question}
+                            </div>
+                          </div>
+                          <div className="text-[0.8rem] text-text-secondary italic border-l-2 border-border pl-2 my-1 bg-black/5 dark:bg-zinc-800/50 py-2 px-3 rounded-r-md overflow-hidden" style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                            {clarification.selectedText}
+                          </div>
+                          <div className="text-[0.9rem] leading-6 text-text-primary mt-1 border-t border-border/50 pt-2">
+                             <MarkdownRenderer content={clarification.answer} />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()
                 )}
               </div>
             )}

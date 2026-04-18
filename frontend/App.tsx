@@ -15,7 +15,7 @@ import { PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeft, Sun, Moon, 
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import { SnackbarProvider, useSnackbar } from './contexts/SnackbarContext';
 import { ImportedChat, convertToSession } from './services/importService';
-import { AUTH_REQUIRED_EVENT, AuthenticatedUser, BackendConfig, changePassword, createChatMessage, exportAccountData, getBackendConfig, getChatState, getCurrentUser, loginUser, logoutUser, openChatStream, saveChatState, signupUser, stopChatStream, updateProfile } from './services/backendService';
+import { AUTH_REQUIRED_EVENT, AuthenticatedUser, BackendConfig, changePassword, createChatMessage, exportAccountData, getBackendConfig, getChatState, getCurrentUser, loginUser, logoutUser, openChatStream, saveChatState, signupUser, stopChatStream, updateProfile, createClarification } from './services/backendService';
 import WelcomeDashboard from './components/WelcomeDashboard';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate, useLocation, matchPath } from 'react-router-dom';
@@ -104,7 +104,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
     const path: MessageNode[] = [];
     let current: string | null = session.lastActiveNodeId;
     while (current) {
-      const node = session.nodes[current];
+      const node: MessageNode = session.nodes[current];
       if (node) {
         path.unshift(node);
         current = node.parentId;
@@ -120,7 +120,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
   const threadPath = getThreadPath(currentSession);
 
   // Check if any node in the current path is streaming
-  const isCurrentPathStreaming = threadPath.some(node => activeStreams.has(node.id));
+  const isCurrentPathStreaming = threadPath.some((node: MessageNode) => activeStreams.has(node.id));
 
   // Compute which sessions are actively streaming (for sidebar indicator)
   const streamingSessionIds = React.useMemo(() => {
@@ -957,6 +957,18 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
     await generateFromNode(nodeToEdit.parentId, newContent, currentSession.id, isThinkingEnabled, attachments);
   };
 
+  const handleClarify = async (nodeId: string, selectedText: string, question: string) => {
+    const sessionId = stateRef.current.currentSessionId;
+    if (!sessionId) return;
+    try {
+      const response = await createClarification(sessionId, nodeId, selectedText, question);
+      setState(response.state);
+    } catch (e) {
+      console.error('Clarification failed', e);
+      throw e; // Let the UI handle it
+    }
+  };
+
   const handleSuggestionClick = async (suggestion: string, nodeId: string) => {
     if (!currentSession) return;
     // Reset textarea height if needed, though input state isn't used here directly
@@ -1582,10 +1594,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
                   <ChatMessage
                     key={node.id}
                     node={node}
+                    sessionId={currentSession?.id}
                     isHead={idx === threadPath.length - 1}
                     onBranch={handleBranch}
                     onQuote={handleQuote}
                     onEdit={handleEditMessage}
+                    onClarify={handleClarify}
                     onDelete={deleteNode}
                     isActivePath={true}
                     isEditing={editingNodeId === node.id}

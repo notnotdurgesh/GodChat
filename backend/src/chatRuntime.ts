@@ -361,6 +361,34 @@ export const getSessionHistory = async (session: ChatSession, parentId: string |
   return buildHistory(session.nodes, parentId, attachmentStore, userId);
 };
 
+export const generateClarification = async (
+  history: Content[],
+  selectedText: string,
+  question: string
+): Promise<string> => {
+  const ai = getClient();
+  const sysInstruction = `You are a helpful assistant. The user is asking for clarification on a specific piece of text from the current message.
+Selected text: "${selectedText}"
+The user's question: "${question}"
+Provide a brief, concise, and helpful answer answering their doubt directly. Return ONLY your answer. Use markdown formatting.`;
+
+  const contents = [...history, {
+    role: 'user',
+    parts: [{ text: `Regarding the text: "${selectedText}"\n\nQuestion: ${question}` }]
+  }];
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-3.1-flash-lite-preview',
+    contents: contents as Content[],
+    config: {
+      systemInstruction: sysInstruction,
+      temperature: 0.3,
+    }
+  });
+
+  return response.text || "Could not generate clarification.";
+};
+
 export const generateBranchLabel = async (
   stateStore: import('./chatStateStore').ChatStateStore,
   userId: string,

@@ -8,6 +8,14 @@ export interface Attachment {
   url?: string;
 }
 
+export interface Clarification {
+  id: string;
+  selectedText: string;
+  question: string;
+  answer: string;
+  timestamp: number;
+}
+
 export interface MessageNode {
   id: string;
   parentId: string | null;
@@ -19,6 +27,7 @@ export interface MessageNode {
   isStreaming?: boolean;
   wasThinkingEnabled?: boolean;
   attachments?: Attachment[];
+  clarifications?: Clarification[];
   customLabel?: string;
   customColor?: string;
   customAlias?: string;

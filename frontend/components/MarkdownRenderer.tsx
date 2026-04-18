@@ -508,17 +508,27 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, compact = 
                 <img src={src} alt={alt} className="max-h-[60px] max-w-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
               </div>
             ),
-            a: ({ children, href, ...props }) => (
-              <a
-                href={href}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-accent-primary hover:underline"
-                {...props}
-              >
-                {children}
-              </a>
-            )
+            a: ({ children, href, ...props }) => {
+              if (href?.startsWith('#clarify-')) {
+                const handleClarifyClick = (e: React.MouseEvent) => {
+                  e.preventDefault();
+                  const event = new CustomEvent('clarify-click', { detail: href.replace('#clarify-', '') });
+                  window.dispatchEvent(event);
+                };
+                return <mark onClick={handleClarifyClick} className="bg-yellow-500/30 text-inherit px-0.5 rounded cursor-pointer decoration-dotted underline decoration-yellow-500/50 hover:bg-yellow-500/50 transition-colors">{children}</mark>;
+              }
+              return (
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-accent-primary hover:underline"
+                  {...props}
+                >
+                  {children}
+                </a>
+              );
+            }
           }}
         >
           {content}
@@ -539,6 +549,14 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, compact = 
           ),
           code: (props) => <CodeBlock {...props} isStatic={isStatic} currentTheme={currentTheme} />,
           a: ({ children, href, ...props }) => {
+            if (href?.startsWith('#clarify-')) {
+              const handleClarifyClick = (e: React.MouseEvent) => {
+                e.preventDefault();
+                const event = new CustomEvent('clarify-click', { detail: href.replace('#clarify-', '') });
+                window.dispatchEvent(event);
+              };
+              return <mark onClick={handleClarifyClick} className="bg-yellow-500/30 text-inherit px-0.5 rounded cursor-pointer decoration-dotted underline decoration-yellow-500/50 hover:bg-yellow-500/50 transition-colors">{children}</mark>;
+            }
             const isMermaidEdit = href?.includes('mermaid.live/edit');
             if (isMermaidEdit) {
               return null; // Hidden as it is now integrated into the Image overlay

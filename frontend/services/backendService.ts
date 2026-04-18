@@ -202,8 +202,20 @@ export const createChatMessage = async (payload: {
     method: 'POST',
     body: JSON.stringify(payload),
   });
-
   return parseResponse<CreateChatMessageResponse>(response);
+};
+
+export const createClarification = async (
+  sessionId: string,
+  nodeId: string,
+  selectedText: string,
+  question: string
+): Promise<{ clarification: import('../types').Clarification, state: ChatState }> => {
+  const response = await apiFetch(`/api/chat/${sessionId}/nodes/${nodeId}/clarify`, {
+    method: 'POST',
+    body: JSON.stringify({ selectedText, question }),
+  });
+  return parseResponse<{ clarification: import('../types').Clarification, state: ChatState }>(response);
 };
 
 export const stopChatStream = async (streamId: string): Promise<boolean> => {
