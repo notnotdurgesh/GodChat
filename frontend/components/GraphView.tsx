@@ -86,9 +86,13 @@ const GraphView: React.FC<GraphViewProps> = ({
 
   const [activeNoteEditorId, setActiveNoteEditorId] = useState<string | null>(null);
   const [noteMenuPos, setNoteMenuPos] = useState<{ x: number, y: number } | undefined>(undefined);
+  const previousSnapIdRef = useRef<string | null>(null);
 
   // Zoom Transform State (for converting screen coords)
-  const [currentZoomState, setCurrentZoomState] = useState(d3.zoomIdentity);
+  // Store actual transform in ref for immediate updates, sync to state throttled (~33ms) for React renders
+  const cullRafRef = useRef<number>(0);
+  const zoomStateRef = useRef(d3.zoomIdentity);
+  const lastZoomSyncRef = useRef(0);
 
   // Filtering & Interaction State
   const [filterText, setFilterText] = useState('');
@@ -109,6 +113,111 @@ const GraphView: React.FC<GraphViewProps> = ({
   const prevRootIdRef = useRef<string | null>(null);
   const prevFocusTriggerRef = useRef<number>(0);
   const labelCacheRef = useRef<Map<string, { content: string, theme: string, html: string }>>(new Map());
+
+  // Stable callbacks using refs to prevent effect loops
+  const onNodeClickRef = useRef(onNodeClick);
+  const onDeleteRef = useRef(onDelete);
+  const onUpdateNodeRef = useRef(onUpdateNode);
+  const onAddNoteRef = useRef(onAddNote);
+  const onUpdateNoteRef = useRef(onUpdateNote);
+  const onDeleteNoteRef = useRef(onDeleteNote);
+
+  useEffect(() => {
+    onNodeClickRef.current = onNodeClick;
+    onDeleteRef.current = onDelete;
+    onUpdateNodeRef.current = onUpdateNode;
+    onAddNoteRef.current = onAddNote;
+    onUpdateNoteRef.current = onUpdateNote;
+    onDeleteNoteRef.current = onDeleteNote;
+  });
+
+  const getClosestNode = useCallback((x: number, y: number, threshold = 150): d3.HierarchyPointNode<TreeDatum> | null => {
+    if (!structureRef.current.nodeDescendants.length) return null;
+    let closestNode = null;
+    let minTargetDist = threshold;
+    const cx = x + 150; // Approximating note center
+    const cy = y + 20;
+
+    for (const d of structureRef.current.nodeDescendants) {
+      if (typeof d.x !== 'number' || typeof d.y !== 'number') continue;
+      const targetX = d.x;
+      const targetY = d.y;
+
+      const dist = Math.hypot(targetX - cx, targetY - cy);
+      if (dist < minTargetDist) {
+        minTargetDist = dist;
+        closestNode = d;
+      }
+    }
+    return closestNode;
+  }, []);
+
+  const handleNoteDrag = useCallback((id: string, newX: number, newY: number) => {
+    const closest = getClosestNode(newX, newY);
+    const targetId = closest ? closest.data.id : null;
+    
+    if (previousSnapIdRef.current !== targetId) {
+      if (previousSnapIdRef.current) {
+        const el = document.getElementById(`node-${previousSnapIdRef.current}`);
+        if (el) {
+          const card = el.querySelector('.pointer-events-auto');
+          if (card) {
+            card.classList.remove('filter', 'drop-shadow-[0_0_12px_rgba(255,235,59,0.8)]', 'border-[3px]', 'border-yellow-400');
+          }
+        }
+      }
+      if (targetId) {
+        const el = document.getElementById(`node-${targetId}`);
+        if (el) {
+          const card = el.querySelector('.pointer-events-auto');
+          if (card) {
+            card.classList.add('filter', 'drop-shadow-[0_0_12px_rgba(255,235,59,0.8)]', 'border-[3px]', 'border-yellow-400');
+          }
+        }
+      }
+      previousSnapIdRef.current = targetId;
+    }
+  }, [getClosestNode]);
+
+  const handleNoteDragEnd = useCallback((id: string, finalX: number, finalY: number, note: GraphNote) => {
+    const closest = getClosestNode(finalX, finalY);
+
+    if (previousSnapIdRef.current) {
+        const el = document.getElementById(`node-${previousSnapIdRef.current}`);
+        if (el) {
+          const card = el.querySelector('.pointer-events-auto');
+          if (card) {
+            card.classList.remove('filter', 'drop-shadow-[0_0_12px_rgba(255,235,59,0.8)]', 'border-[3px]', 'border-yellow-400');
+          }
+        }
+        previousSnapIdRef.current = null;
+    }
+
+    if (closest) {
+      // Attach
+      const attachedX = finalX - closest.x;
+      const attachedY = finalY - closest.y;
+      onUpdateNoteRef.current(id, { 
+        x: attachedX, 
+        y: attachedY, 
+        attachedToNodeId: closest.data.id 
+      });
+    } else {
+      // Detach or keep free
+      onUpdateNoteRef.current(id, { 
+        x: finalX, 
+        y: finalY, 
+        attachedToNodeId: undefined 
+      });
+    }
+  }, [getClosestNode]);
+
+  // Phase 3: Structure Effect - stores computed hierarchy & layout
+  const structureRef = useRef<{
+    hierarchyData: TreeDatum | null;
+    root: d3.HierarchyPointNode<TreeDatum> | null;
+    nodeDescendants: d3.HierarchyPointNode<TreeDatum>[];
+  }>({ hierarchyData: null, root: null, nodeDescendants: [] });
 
   useEffect(() => {
     if (isSearchOpen && searchInputRef.current) {
@@ -131,13 +240,110 @@ const GraphView: React.FC<GraphViewProps> = ({
   // If Edit Mode is turned off, close any open forms
   useEffect(() => {
     if (!isEditMode) {
-      // Use standard callback to avoid effect setState warning if possible, 
-      // or essentially this is a sync of state. 
-      // The warning says avoid it, but here it's "if A changed, sync B".
-      // We can do setEditForm(null) but it triggers re-render.
-      // Better: Reset it in the same handler that sets isEditMode(false).
+      // Return behavior to non-edit mode
     }
   }, [isEditMode]);
+
+  // Garbage Collector & Isolation State
+  const draggingNodeIdRef = useRef<string | null>(null);
+
+  // Phase 3: STRUCTURE - Build hierarchy and compute layout
+  // Runs ONLY when structure dependencies change: nodes, rootId, collapsedNodeIds
+  // Computes synchronous layout data for notes mapping and D3 effect
+  const computedStructure = useMemo(() => {
+    if (!rootId || !nodes[rootId]) {
+      return { hierarchyData: null, root: null, nodeDescendants: [] };
+    }
+
+    // Build Hierarchy (recursive function)
+    const buildHierarchy = (currentId: string, depth: number = 0): TreeDatum | null => {
+      const node = nodes[currentId];
+      if (!node) return null;
+
+      const isCollapsed = collapsedNodeIds.has(currentId);
+
+      const datum: TreeDatum = {
+        id: node.id,
+        role: node.role,
+        content: node.content,
+        timestamp: node.timestamp,
+        children: [],
+        customLabel: node.customLabel,
+        customColor: node.customColor,
+        visualOffset: node.visualOffset,
+        isLoading: false,
+        attachments: node.attachments,
+        branchLabel: node.branchLabel,
+        isCollapsed,
+        metrics: { totalDescendants: 0, maxChildDepth: depth }
+      };
+
+      let totalDescendants = 0;
+      let maxChildDepth = depth;
+
+      node.childrenIds.forEach(childId => {
+        const childNode = nodes[childId];
+        if (childNode) {
+          if (childNode.isStreaming) {
+            datum.isLoading = true;
+          } else {
+            const childDatum = buildHierarchy(childId, depth + 1);
+            if (childDatum) {
+              totalDescendants += (childDatum.metrics?.totalDescendants || 0) + 1;
+              maxChildDepth = Math.max(maxChildDepth, childDatum.metrics?.maxChildDepth || (depth + 1));
+              
+              // Only add to children array if NOT collapsed, otherwise they are hidden from Layout
+              if (!isCollapsed) {
+                datum.children?.push(childDatum);
+              }
+            }
+          }
+        }
+      });
+
+      datum.metrics = { totalDescendants, maxChildDepth };
+
+      if (datum.children?.length === 0) delete datum.children;
+      return datum;
+    };
+
+    const hierarchyData = buildHierarchy(rootId, 0);
+    if (!hierarchyData) {
+      return { hierarchyData: null, root: null, nodeDescendants: [] };
+    }
+
+    // Compute D3 Tree Layout
+    const root = d3.hierarchy(hierarchyData);
+
+    const nodeWidth = 370;
+    const nodeHeight = 150;
+
+    const treeLayout = d3.tree<TreeDatum>()
+      .nodeSize([nodeWidth, nodeHeight])
+      .separation((a, b) => (a.parent === b.parent ? 1.1 : 1.3));
+
+    const pointRoot = treeLayout(root);
+
+    // Apply Visual Offsets & cache tree positions
+    pointRoot.descendants().forEach((d: any) => {
+      d.treeX = d.x;
+      d.treeY = d.y;
+      if (d.data.visualOffset) {
+        d.x += d.data.visualOffset.x;
+        d.y += d.data.visualOffset.y;
+      }
+    });
+
+    return {
+      hierarchyData,
+      root: pointRoot as d3.HierarchyPointNode<TreeDatum>,
+      nodeDescendants: pointRoot.descendants() as d3.HierarchyPointNode<TreeDatum>[],
+    };
+
+  }, [nodes, rootId, collapsedNodeIds]);
+
+  // Synchronously update the ref so D3 imperatively has the layout 
+  structureRef.current = computedStructure;
 
   const activePathIds = useMemo(() => {
     const ids = new Set<string>();
@@ -152,119 +358,28 @@ const GraphView: React.FC<GraphViewProps> = ({
   // buildHierarchy is defined inside the useEffect to avoid "accessed before declared" issues with recursive useCallback
 
   const handleDragEnd = useCallback((d: any, finalX: number, finalY: number) => {
-    // Calculate delta from the original tree layout position (which is d.x, d.y before drag modified it? 
-    // Wait, d3 drag modifies the event subject. 
-    // We need to capture the 'original' layout position which we can store on the datum)
-
-    // Actually, in the drag handler below we will likely update the DOM. 
-    // To persist, we need to know the offset.
-    // Offset = FinalPos - OriginalTreePos
-    // We'll store 'treeX' and 'treeY' on the node during layout.
-
-    if (onUpdateNode) {
+    if (onUpdateNodeRef.current) {
       const offsetX = finalX - d.treeX;
       const offsetY = finalY - d.treeY;
-      onUpdateNode(d.data.id, { visualOffset: { x: offsetX, y: offsetY } });
+      onUpdateNodeRef.current(d.data.id, { visualOffset: { x: offsetX, y: offsetY } });
     }
-  }, [onUpdateNode]);
+  }, []);
 
   useEffect(() => {
     if (!svgRef.current || !containerRef.current || !rootId || !nodes[rootId]) return;
 
-    // Defer heavy rendering to unblock the main thread for animations
-    // THROTTLE: Only update graph every ~50ms to prevent main thread blocking during high-speed streaming
-    // const lastUpdateRef = useRef(0); // MOVED TO TOP LEVEL
-
-    // We used to use a simple setTimeout(0), which is basically setImmediate.
-    // Now we use a real throttle via requestAnimationFrame + timestamp check? 
-    // Or just a setTimeout with delay?
-    // Let's use a 50ms (20fps) throttle which is enough for smooth visual but saves huge CPU.
-
     const timerId = setTimeout(() => {
+      // Throttle Logic Removed from here, we will handle fast updates natively via the __cachedHTML D3 diffing!
+      // Since innerHTML checking skips heavy DOM work, React triggering requestAnimationFrame or setTimeout(0) is super fast now.
+      
       const now = Date.now();
-      if (now - lastUpdateRef.current < 40 && nodes[rootId]?.isStreaming) {
-        // Skip this frame if we just updated and we are streaming
-        // But we must ensure eventual update? 
-        // React Effect will run again on next prop change. 
-        // If we skip here, we rely on the next token to trigger the next effect.
-        // This works fine for continuous streams.
-        // But what if the LAST token comes? We shouldn't skip it.
-        // So we check: is any node streaming? 
-        // If streaming, we can throttle. If not streaming, we MUST render immediately.
-
-        // Actually, simpler logic:
-        // Just change the setTimeout delay to 50ms?
-        // No, because that just delays everything by 50ms, but still runs every time if fast enough?
-        // No, useEffect cleanup will clear the previous timeout!
-        // Yes! If props change faster than 50ms, the previous timeout is CLEARED.
-        // So only the "last" change within a 50ms window will execute.
-        // This is effectively DEBOUNCING.
-        // Debouncing is BAD for streaming because the text won't appear until stream PAUSES.
-        // We want THROTTLING (run at most every X ms).
-
-        // Correct Throttling with useEffect:
-        // We can't easily throttle inside useEffect because it fires on every prop change.
-        // We need to decide whether to skip.
-        return;
-      }
       lastUpdateRef.current = now;
 
       if (!svgRef.current || !containerRef.current) return;
 
-      // Define buildHierarchy inside the effect to avoid "accessed before declared" issues with recursive functions
-      const buildHierarchy = (currentId: string, depth: number = 0): TreeDatum | null => {
-        const node = nodes[currentId];
-        if (!node) return null;
-
-        const isCollapsed = collapsedNodeIds.has(currentId);
-
-        const datum: TreeDatum = {
-          id: node.id,
-          role: node.role,
-          content: node.content,
-          timestamp: node.timestamp,
-          children: [],
-          customLabel: node.customLabel,
-          customColor: node.customColor,
-          visualOffset: node.visualOffset,
-          isLoading: false,
-          attachments: node.attachments,
-          branchLabel: node.branchLabel,
-          isCollapsed,
-          metrics: { totalDescendants: 0, maxChildDepth: depth }
-        };
-
-        let totalDescendants = 0;
-        let maxChildDepth = depth;
-
-        node.childrenIds.forEach(childId => {
-          const childNode = nodes[childId];
-          if (childNode) {
-            if (childNode.isStreaming) {
-              datum.isLoading = true;
-            } else {
-              const childDatum = buildHierarchy(childId, depth + 1);
-              if (childDatum) {
-                totalDescendants += (childDatum.metrics?.totalDescendants || 0) + 1;
-                maxChildDepth = Math.max(maxChildDepth, childDatum.metrics?.maxChildDepth || (depth + 1));
-                
-                // Only add to children array if NOT collapsed, otherwise they are hidden from Layout
-                if (!isCollapsed) {
-                  datum.children?.push(childDatum);
-                }
-              }
-            }
-          }
-        });
-
-        datum.metrics = { totalDescendants, maxChildDepth };
-
-        if (datum.children?.length === 0) delete datum.children;
-        return datum;
-      };
-
-      const hierarchyData = buildHierarchy(rootId, 0);
-      if (!hierarchyData) return;
+      // Phase 3: Read computed structure from the Structure Effect ref
+      if (!structureRef.current.root) return;
+      const root = structureRef.current.root;
 
       const containerWidth = containerRef.current.clientWidth;
       const containerHeight = containerRef.current.clientHeight;
@@ -279,6 +394,26 @@ const GraphView: React.FC<GraphViewProps> = ({
         .attr("height", containerHeight)
         .style("cursor", isEditMode ? "default" : "grab")
         .style("touch-action", "none");
+        
+      let defs = svg.select<SVGDefsElement>('defs');
+      if (defs.empty()) defs = svg.append('defs');
+      
+      // Add glow filter for snapping target
+      if (defs.select('#snap-glow').empty()) {
+        const glowFilter = defs.append('filter')
+          .attr('id', 'snap-glow')
+          .attr('x', '-20%')
+          .attr('y', '-20%')
+          .attr('width', '140%')
+          .attr('height', '140%');
+          
+        glowFilter.append('feDropShadow')
+          .attr('dx', '0')
+          .attr('dy', '0')
+          .attr('stdDeviation', '6')
+          .attr('flood-color', '#ffeb3b') // Yellow sticky note colored glow
+          .attr('flood-opacity', '0.8');
+      }
 
       // Ensure Layers Exist (One-time setup)
       let gLayer = svg.select<SVGGElement>(".zoom-layer");
@@ -303,10 +438,10 @@ const GraphView: React.FC<GraphViewProps> = ({
         })
         .on("zoom", (event) => {
           gLayer.attr("transform", event.transform);
-          // Sync React state AND the imperative overlay layer
-          setCurrentZoomState(event.transform);
+          // Update ref immediately for imperatives (notes layer, culling)
+          zoomStateRef.current = event.transform;
           if (notesLayerRef.current) {
-            notesLayerRef.current.style.transform = event.transform.toString();
+            notesLayerRef.current.style.transform = `translate(${event.transform.x}px, ${event.transform.y}px) scale(${event.transform.k})`;
           }
 
           // Virtual Rendering (Culling)
@@ -320,41 +455,21 @@ const GraphView: React.FC<GraphViewProps> = ({
             const minY = -y/k - 300/k;
             const maxY = (h - y)/k + 300/k;
 
-            nodeLayer.selectAll<SVGGElement, any>(".node").each(function(d) {
-              const isVisible = d.x >= minX && d.x <= maxX && d.y >= minY && d.y <= maxY;
-              if (isVisible) {
-                if (this.style.display === "none") this.style.display = "";
-              } else {
-                if (this.style.display !== "none") this.style.display = "none";
-              }
+            if (cullRafRef.current) cancelAnimationFrame(cullRafRef.current);
+            cullRafRef.current = requestAnimationFrame(() => {
+              nodeLayer.selectAll<SVGGElement, any>(".node").each(function(d) {
+                const isVisible = d.x >= minX && d.x <= maxX && d.y >= minY && d.y <= maxY;
+                if (isVisible) {
+                  if (this.style.display === "none") this.style.display = "";
+                } else {
+                  if (this.style.display !== "none") this.style.display = "none";
+                }
+              });
             });
           }
         });
 
       svg.call(zoom).on("dblclick.zoom", null);
-
-      // --- Tree Layout Calculation ---
-      const root = d3.hierarchy(hierarchyData);
-
-      // Tighter layout
-      const nodeWidth = 370;
-      const nodeHeight = 150;
-
-      const treeLayout = d3.tree<TreeDatum>()
-        .nodeSize([nodeWidth, nodeHeight])
-        .separation((a, b) => (a.parent === b.parent ? 1.1 : 1.3));
-
-      treeLayout(root);
-
-      // Apply Visual Offsets & cache tree positions
-      root.descendants().forEach((d: any) => {
-        d.treeX = d.x;
-        d.treeY = d.y;
-        if (d.data.visualOffset) {
-          d.x += d.data.visualOffset.x;
-          d.y += d.data.visualOffset.y;
-        }
-      });
 
       // --- LINKS (Morphing) ---
       const links = linkLayer.selectAll<SVGPathElement, any>(".link")
@@ -382,7 +497,10 @@ const GraphView: React.FC<GraphViewProps> = ({
       // UPDATE + ENTER Merge
       const linksUpdate = linksEnter.merge(links as any);
 
-      linksUpdate.transition().duration(500)
+      // Isolate dragging nodes from being immediately reset by React re-renders
+      linksUpdate
+        .filter((d: any) => d.source.data.id !== draggingNodeIdRef.current && d.target.data.id !== draggingNodeIdRef.current)
+        .transition().duration(500)
         .attr("stroke", (d: any) => {
           const isReversed = d.target.y <= d.source.y;
           if (isReversed) return '#ef4444'; // Red-500 alert
@@ -434,15 +552,16 @@ const GraphView: React.FC<GraphViewProps> = ({
 
       // UPDATE + ENTER Merge
       const nodesUpdate = nodesEnter.merge(nodesSelection as any);
-
       // Animate Position
-      nodesUpdate.transition().duration(500)
+      nodesUpdate
+        .filter((d: any) => d.data.id !== draggingNodeIdRef.current)
+        .transition().duration(500)
         .attr("transform", (d: any) => `translate(${d.x},${d.y}) scale(1)`)
         .style("opacity", 1);
 
       // Update Content (Efficiently)
       nodesUpdate.select("foreignObject")
-        .html((d: any) => {
+        .each(function(d: any) {
           const isActive = d.data.id === activeNodeId;
           const isActivePath = activePathIds.has(d.data.id);
           const isUser = d.data.role === Role.USER;
@@ -563,7 +682,7 @@ const GraphView: React.FC<GraphViewProps> = ({
             }
           }
 
-          return `
+          const newHTML = `
                <div class="w-full h-full relative group flex items-center justify-center pointer-events-none ${isExpanded ? 'z-50' : 'z-10'}" style="${isExpanded ? 'transform: translateY(' + (cardH*0.2) + 'px)' : ''}">
                  
                  <!-- Main Card -->
@@ -574,12 +693,6 @@ const GraphView: React.FC<GraphViewProps> = ({
                     ${isEditMode ? `
                         <div class="absolute top-1 right-1 text-xs opacity-50"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></div>
                     `: ''}
-
-                    ${d.data.branchLabel ? `
-                        <div class="absolute -top-8 left-1/2 -translate-x-1/2 whitespace-nowrap z-[60] pointer-events-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] animate-in slide-in-from-bottom-2 fade-in duration-500">
-                           <span class="font-[cursive,'Comic_Sans_MS',sans-serif] text-[16px] font-bold tracking-wide text-zinc-200/90">${d.data.branchLabel}</span>
-                        </div>
-                    ` : ''}
 
                     <div class="p-2.5 flex-1 flex items-start gap-2.5 ${isExpanded ? 'overflow-visible' : 'overflow-hidden'} [.graph-lod-mode_&]:pb-8 [.graph-lod-mode_&]:pt-3">
                       <div class="shrink-0  ${!customColor ? iconColorClass : ''} [.graph-lod-mode_&]:scale-150 [.graph-lod-mode_&]:translate-x-2 [.graph-lod-mode_&]:translate-y-1 transition-all" style="${iconStyle}">
@@ -644,10 +757,16 @@ const GraphView: React.FC<GraphViewProps> = ({
 
                </div>
              `;
+          
+          const elem = this as any;
+          if (elem.__cachedHTML !== newHTML) {
+            elem.innerHTML = newHTML;
+            elem.__cachedHTML = newHTML;
+          }
         });
 
       // Click Handler (Bind to nodesUpdate)
-      nodesUpdate.on("click", (event, d) => {
+      nodesUpdate.on("click", (event, d: any) => {
         if (event.defaultPrevented) return; // Dragged
         event.stopPropagation();
 
@@ -692,13 +811,13 @@ const GraphView: React.FC<GraphViewProps> = ({
         // Branch Delete
         if (event.target.closest('.graph-delete-btn')) {
           if (confirm("Delete this branch and all its pathways?")) {
-            onDelete?.(d.data.id);
+            onDeleteRef.current?.(d.data.id);
           }
           return;
         }
         // Focus
         if (event.target.closest('.graph-diverge-btn')) {
-          onNodeClick(d.data.id);
+          onNodeClickRef.current(d.data.id);
           return;
         }
 
@@ -713,7 +832,7 @@ const GraphView: React.FC<GraphViewProps> = ({
         }
 
         // Normal Navigate
-        onNodeClick(d.data.id);
+        onNodeClickRef.current(d.data.id);
 
         const scale = 1;
         const x = -d.x * scale + containerWidth / 2;
@@ -727,25 +846,53 @@ const GraphView: React.FC<GraphViewProps> = ({
 
       if (isEditMode) {
         const drag = d3.drag<SVGGElement, any>()
-          .on("start", (event, _d) => {
+          .on("start", (event, d) => {
             d3.select(event.sourceEvent.target).style("cursor", "grabbing");
+            draggingNodeIdRef.current = d.data.id;
           })
           .on("drag", (event, d) => {
             d3.select(event.sourceEvent.target.closest("g")).interrupt();
-            d.x += event.dx;
-            d.y += event.dy;
-            d3.select(event.sourceEvent.target.closest("g")).attr("transform", `translate(${d.x},${d.y})`);
+            
+            // Critical fix: Find the live data reference inside structureRef instead of stale drag 'd'
+            const liveD = structureRef.current.nodeDescendants.find(n => n.data.id === d.data.id) || d;
+            liveD.x += event.dx;
+            liveD.y += event.dy;
+            // Also update the stale 'd' so D3's internal state doesn't snap back maliciously 
+            if (liveD !== d) {
+               d.x = liveD.x;
+               d.y = liveD.y;
+            }
 
-            gLayer.selectAll<SVGPathElement, any>(".link").attr("d", flightPath as any)
-            .attr("stroke", (l: any) => {
-              const isReversed = l.target.y <= l.source.y;
-              if (isReversed) return '#ef4444';
-              return activePathIds.has(l.target.data.id) ? COLORS.activeNode : 'var(--border-color)';
-            });
+            d3.select(event.sourceEvent.target.closest("g")).attr("transform", `translate(${liveD.x},${liveD.y})`);
+
+            gLayer.selectAll<SVGPathElement, any>(".link")
+              .filter((l: any) => l.source.data.id === liveD.data.id || l.target.data.id === liveD.data.id)
+              .attr("d", flightPath as any)
+              .attr("stroke", (l: any) => {
+                const isReversed = l.target.y <= l.source.y;
+                if (isReversed) return '#ef4444';
+                return activePathIds.has(l.target.data.id) ? COLORS.activeNode : 'var(--border-color)';
+              });
+              
+            // Real-time synchronization for magnetically attached notes
+            if (notesLayerRef.current) {
+              const attachedNotes = notesLayerRef.current.querySelectorAll(`[data-attached-to="${liveD.data.id}"]`);
+              attachedNotes.forEach(el => {
+                const element = el as HTMLDivElement;
+                const ox = Number(element.getAttribute('data-offset-x') || 0);
+                const oy = Number(element.getAttribute('data-offset-y') || 0);
+                element.style.transform = `translate(${liveD.x + ox}px, ${liveD.y + oy}px)`;
+              });
+            }
           })
           .on("end", (event, d) => {
+            const liveD = structureRef.current.nodeDescendants.find(n => n.data.id === d.data.id) || d;
             d3.select(event.sourceEvent.target).style("cursor", "move");
-            handleDragEnd(d, d.x, d.y);
+            
+            // Release the garbage collector lock
+            draggingNodeIdRef.current = null;
+            
+            handleDragEnd(liveD, liveD.x, liveD.y);
           });
 
         nodesUpdate.call(drag);
@@ -814,14 +961,15 @@ const GraphView: React.FC<GraphViewProps> = ({
 
     return () => clearTimeout(timerId);
 
-  }, [nodes, rootId, activeNodeId, filterText, filterRole, activePathIds, theme, isEditMode, onUpdateNode, handleDragEnd, onNodeClick, onDelete, focusTrigger, collapsedNodeIds, expandedNodeId]); // added expandedNodeId
-  // buildHierarchy is now defined inside the effect to avoid recursive useCallback issues
+  }, [nodes, rootId, activeNodeId, filterText, filterRole, activePathIds, theme, isEditMode, handleDragEnd, focusTrigger, collapsedNodeIds, expandedNodeId]);
+  // Phase 3: Structure effect handles hierarchy calculation
+  // Main render effect still needs nodes/rootId in deps to trigger DOM updates
 
   // Keyboard Shortcuts (Delete)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNoteId && !editingNoteId) {
-        onDeleteNote(selectedNoteId);
+        onDeleteNoteRef.current(selectedNoteId);
         setSelectedNoteId(null);
       }
       if (e.key === 'Escape') {
@@ -832,7 +980,7 @@ const GraphView: React.FC<GraphViewProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedNoteId, editingNoteId, activeTool, onDeleteNote]);
+  }, [selectedNoteId, editingNoteId, activeTool, ]);
 
   // Note Interaction
   const handleCanvasClick = (e: React.MouseEvent) => {
@@ -845,8 +993,8 @@ const GraphView: React.FC<GraphViewProps> = ({
       const rawX = e.clientX - rect.left;
       const rawY = e.clientY - rect.top;
 
-      // Apply Inverse Transform
-      const [x, y] = currentZoomState.invert([rawX, rawY]);
+      // Apply Inverse Transform (use ref for latest zoom state)
+      const [x, y] = zoomStateRef.current.invert([rawX, rawY]);
 
       // Handle Auto-Collapse on background click
       if (expandedNodeId) {
@@ -856,7 +1004,7 @@ const GraphView: React.FC<GraphViewProps> = ({
       }
 
       const newId = uuidv4();
-      onAddNote({
+      onAddNoteRef.current({
         id: newId,
         x,
         y,
@@ -892,7 +1040,7 @@ const GraphView: React.FC<GraphViewProps> = ({
   return (
       <div
       ref={containerRef}
-      className={`w-full h-full relative overflow-hidden bg-background touch-action-none ${activeTool === 'text' ? 'cursor-text' : ''} ${currentZoomState.k < 0.4 ? 'graph-lod-mode' : ''}`}
+      className={`w-full h-full relative overflow-hidden bg-background touch-action-none ${activeTool === 'text' ? 'cursor-text' : ''} ${zoomStateRef.current.k < 0.4 ? 'graph-lod-mode' : ''}`}
       onClick={handleCanvasClick}
     >
 
@@ -920,9 +1068,9 @@ const GraphView: React.FC<GraphViewProps> = ({
       {activeNoteEditorId && notes[activeNoteEditorId] && (
         <GraphNoteEditorModal
           note={notes[activeNoteEditorId]}
-          onUpdate={(updates) => onUpdateNote(activeNoteEditorId, updates)}
+          onUpdate={(updates) => onUpdateNoteRef.current(activeNoteEditorId, updates)}
           onDelete={() => {
-            onDeleteNote(activeNoteEditorId);
+            onDeleteNoteRef.current(activeNoteEditorId);
             setActiveNoteEditorId(null);
           }}
           onDuplicate={() => {
@@ -934,7 +1082,7 @@ const GraphView: React.FC<GraphViewProps> = ({
               y: original.y + 20,
               createdAt: Date.now()
             };
-            onAddNote(newNote);
+            onAddNoteRef.current(newNote);
             setActiveNoteEditorId(null);
           }}
           onClose={() => setActiveNoteEditorId(null)}
@@ -947,59 +1095,80 @@ const GraphView: React.FC<GraphViewProps> = ({
       {/* Notes Overlay Layer - Independent from SVG for perfect interaction */}
       <div
         ref={notesLayerRef}
-        className="absolute inset-0 pointer-events-none origin-top-left overflow-visible z-10"
+        className="absolute inset-0 pointer-events-none origin-top-left overflow-visible z-10 will-change-transform"
         style={{
-          transform: `translate(${currentZoomState.x}px, ${currentZoomState.y}px) scale(${currentZoomState.k})`
+          transform: zoomStateRef.current ? `translate(${zoomStateRef.current.x}px, ${zoomStateRef.current.y}px) scale(${zoomStateRef.current.k})` : 'translate(0px, 0px) scale(1)'
         }}
       >
-        {Object.values(notes).map(note => (
-          <div
-            key={note.id}
-            className="absolute select-none will-change-transform"
-            style={{
-              left: 0,
-              top: 0,
-              transform: `translate(${note.x}px, ${note.y}px)`,
-              pointerEvents: 'auto',
-              backfaceVisibility: 'hidden',
-              WebkitBackfaceVisibility: 'hidden'
-            }}
-          >
-            <GraphNoteComponent
-              note={note}
-              isSelected={selectedNoteId === note.id}
-              isEditing={editingNoteId === note.id}
-              scale={currentZoomState.k}
-              enableTouch={isTouchDevice}
-              onSelect={(e) => {
-                e.stopPropagation();
-                setSelectedNoteId(note.id);
+        {Object.values(notes).map(note => {
+          let renderedX = note.x;
+          let renderedY = note.y;
+          let isVisible = true;
+
+          if (note.attachedToNodeId) {
+            const attachedNode = structureRef.current.nodeDescendants.find(n => n.data.id === note.attachedToNodeId);
+            if (attachedNode) {
+              renderedX = attachedNode.x + note.x;
+              renderedY = attachedNode.y + note.y;
+            } else {
+              isVisible = false;
+            }
+          }
+
+          if (!isVisible) return null;
+
+          return (
+            <div
+              key={note.id}
+              data-attached-to={note.attachedToNodeId}
+              data-offset-x={note.x}
+              data-offset-y={note.y}
+              className="absolute select-none will-change-transform"
+              style={{
+                left: 0,
+                top: 0,
+                transform: `translate(${renderedX}px, ${renderedY}px)`,
+                pointerEvents: 'auto',
+                backfaceVisibility: 'hidden',
+                WebkitBackfaceVisibility: 'hidden'
               }}
-              onDoubleClick={(e) => {
-                e.stopPropagation();
-                setEditingNoteId(note.id);
-                setSelectedNoteId(note.id);
-              }}
-              onUpdate={(updates) => onUpdateNote(note.id, updates)}
-              onDelete={() => {
-                onDeleteNote(note.id);
+            >
+              <GraphNoteComponent
+                note={{ ...note, x: renderedX, y: renderedY }}
+                isSelected={selectedNoteId === note.id}
+                isEditing={editingNoteId === note.id}
+                getScale={() => zoomStateRef.current.k}
+                enableTouch={isTouchDevice}
+                onDrag={(newX, newY) => handleNoteDrag(note.id, newX, newY)}
+                onDragEnd={(finalX, finalY) => handleNoteDragEnd(note.id, finalX, finalY, note)}
+                onSelect={(e) => {
+                  e.stopPropagation();
+                  setSelectedNoteId(note.id);
+                }}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  setEditingNoteId(note.id);
+                  setSelectedNoteId(note.id);
+                }}
+                onUpdate={(updates) => onUpdateNoteRef.current(note.id, updates)}
+                onDelete={() => {
+                onDeleteNoteRef.current(note.id);
                 if (selectedNoteId === note.id) setSelectedNoteId(null);
               }}
-              onEditRequested={(e) => {
-                if ('clientX' in e) {
-                  setNoteMenuPos({ x: e.clientX, y: e.clientY });
-                } else {
-                  // Touch event - center/bottom handling logic inside modal or default undefined
-                  setNoteMenuPos(undefined);
-                }
-                setActiveNoteEditorId(note.id);
-              }}
-            />
-          </div>
-        ))}
+                onEditRequested={(e) => {
+                  if ('clientX' in e) {
+                    setNoteMenuPos({ x: e.clientX, y: e.clientY });
+                  } else {
+                    // Touch event - center/bottom handling logic inside modal or default undefined
+                    setNoteMenuPos(undefined);
+                  }
+                  setActiveNoteEditorId(note.id);
+                }}
+              />
+            </div>
+          );
+        })}
       </div>
-
-      <div className="absolute inset-0 cyber-grid pointer-events-none opacity-20"></div>
 
       <div className="absolute top-20 left-4 right-4 z-10 flex justify-center pointer-events-none">
         <div className="bg-white/90 dark:bg-zinc-900/90 border border-gray-200/50 dark:border-zinc-800/50 p-1.5 rounded-2xl flex flex-wrap items-center justify-center gap-0.5 shadow-[0_20px_50px_rgba(0,0,0,0.15)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.4)] pointer-events-auto transition-all duration-300 backdrop-blur-2xl max-w-full">
@@ -1190,7 +1359,7 @@ const GraphView: React.FC<GraphViewProps> = ({
               <div className="flex gap-2 pt-2">
                 <button
                   onClick={() => {
-                    onUpdateNode?.(editForm.id, { customLabel: undefined, customColor: undefined, visualOffset: undefined });
+                    onUpdateNodeRef.current?.(editForm.id, { customLabel: undefined, customColor: undefined, visualOffset: undefined });
                     setEditForm(null);
                   }}
                   className="flex-1 py-2.5 rounded-xl bg-surface border border-border text-text-secondary hover:text-text-primary hover:bg-black/5 dark:hover:bg-white/5 text-xs font-bold flex items-center justify-center gap-2 transition-all active:scale-95"
@@ -1202,7 +1371,7 @@ const GraphView: React.FC<GraphViewProps> = ({
                     const currentNode = nodes[editForm.id];
                     const shouldClearLabel = currentNode && (editForm.label === currentNode.content || !editForm.label.trim());
 
-                    onUpdateNode?.(editForm.id, {
+                    onUpdateNodeRef.current?.(editForm.id, {
                       customLabel: shouldClearLabel ? undefined : editForm.label,
                       customColor: editForm.color
                     });

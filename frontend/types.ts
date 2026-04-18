@@ -53,6 +53,7 @@ export interface GraphNote {
   id: string;
   x: number;
   y: number;
+  attachedToNodeId?: string; // Magnetically snaps tracking a branch origin
   content: string;
   width?: number; // if undefined/null -> auto width based on content
   height?: number; // if undefined/null -> auto height

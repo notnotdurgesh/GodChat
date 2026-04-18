@@ -11,9 +11,11 @@ interface GraphNoteProps {
     onDoubleClick: (e: React.MouseEvent) => void;
     onUpdate: (updates: Partial<GraphNote>) => void;
     onDelete: () => void;
-    scale: number; // Current zoom scale
+    getScale?: () => number; // Current zoom scale
     enableTouch?: boolean;
     onEditRequested?: (e: React.MouseEvent | React.TouchEvent) => void;
+    onDrag?: (previewX: number, previewY: number) => void; // Called continuously
+    onDragEnd?: (finalX: number, finalY: number) => void; // Override commit behavior
 }
 
 const HANDLE_SIZE = 8;
@@ -28,9 +30,11 @@ export const GraphNoteComponent: React.FC<GraphNoteProps> = ({
     onDoubleClick,
     onUpdate,
     onDelete,
-    scale,
+    getScale,
     enableTouch = false,
-    onEditRequested
+    onEditRequested,
+    onDrag,
+    onDragEnd
 }) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const [localContent, setLocalContent] = useState(note.content);
@@ -101,8 +105,8 @@ export const GraphNoteComponent: React.FC<GraphNoteProps> = ({
 
 
         const handleMouseMove = (mv: MouseEvent) => {
-            const deltaX = (mv.clientX - startX) / scale;
-            const deltaY = (mv.clientY - startY) / scale;
+            const deltaX = (mv.clientX - startX) / (getScale ? getScale() : 1);
+            const deltaY = (mv.clientY - startY) / (getScale ? getScale() : 1);
 
             let nextWidth = startWidth;
             let nextHeight = startHeight;
@@ -145,8 +149,8 @@ export const GraphNoteComponent: React.FC<GraphNoteProps> = ({
             setIsInteracting(false);
 
             // Re-calculate final state to sync with React
-            const deltaX = (mv.clientX - startX) / scale;
-            const deltaY = (mv.clientY - startY) / scale;
+            const deltaX = (mv.clientX - startX) / (getScale ? getScale() : 1);
+            const deltaY = (mv.clientY - startY) / (getScale ? getScale() : 1);
 
             const isLeft = handle.includes('w');
             const isRight = handle.includes('e');
@@ -213,8 +217,8 @@ export const GraphNoteComponent: React.FC<GraphNoteProps> = ({
             const state = gestureRef.current;
             if (!state) return;
 
-            const deltaX = (t.clientX - state.startX) / scale;
-            const deltaY = (t.clientY - state.startY) / scale;
+            const deltaX = (t.clientX - state.startX) / (getScale ? getScale() : 1);
+            const deltaY = (t.clientY - state.startY) / (getScale ? getScale() : 1);
 
             let nextWidth = state.initialWidth;
             let nextHeight = state.initialHeight;
@@ -262,8 +266,8 @@ export const GraphNoteComponent: React.FC<GraphNoteProps> = ({
 
             // Calculate final
             const t = te.changedTouches[0];
-            const deltaX = (t.clientX - state.startX) / scale;
-            const deltaY = (t.clientY - state.startY) / scale;
+            const deltaX = (t.clientX - state.startX) / (getScale ? getScale() : 1);
+            const deltaY = (t.clientY - state.startY) / (getScale ? getScale() : 1);
 
             const isLeft = handle.includes('w');
             const isRight = handle.includes('e');
@@ -319,14 +323,21 @@ export const GraphNoteComponent: React.FC<GraphNoteProps> = ({
         const initialNoteY = preview.y;
 
         const handleMouseMove = (mv: MouseEvent) => {
-            const dx = (mv.clientX - startX) / scale;
-            const dy = (mv.clientY - startY) / scale;
+            const dx = (mv.clientX - startX) / (getScale ? getScale() : 1);
+            const dy = (mv.clientY - startY) / (getScale ? getScale() : 1);
+
+            const newX = initialNoteX + dx;
+            const newY = initialNoteY + dy;
 
             setPreview(prev => ({
                 ...prev,
-                x: initialNoteX + dx,
-                y: initialNoteY + dy
+                x: newX,
+                y: newY
             }));
+
+            if (onDrag) {
+                onDrag(newX, newY);
+            }
         };
 
         const handleMouseUp = (mv: MouseEvent) => {
@@ -335,13 +346,18 @@ export const GraphNoteComponent: React.FC<GraphNoteProps> = ({
             setIsInteracting(false);
 
             // Commit
-            const dx = (mv.clientX - startX) / scale;
-            const dy = (mv.clientY - startY) / scale;
+            const dx = (mv.clientX - startX) / (getScale ? getScale() : 1);
+            const dy = (mv.clientY - startY) / (getScale ? getScale() : 1);
             const finalX = initialNoteX + dx;
             const finalY = initialNoteY + dy;
 
             setPreview(prev => ({ ...prev, x: finalX, y: finalY }));
-            onUpdate({ x: finalX, y: finalY });
+            
+            if (onDragEnd) {
+                onDragEnd(finalX, finalY);
+            } else {
+                onUpdate({ x: finalX, y: finalY });
+            }
         };
 
         window.addEventListener('mousemove', handleMouseMove);
@@ -479,8 +495,8 @@ export const GraphNoteComponent: React.FC<GraphNoteProps> = ({
             }
 
             // Perform Drag
-            const deltaX = (t.clientX - state.startX) / scale;
-            const deltaY = (t.clientY - state.startY) / scale;
+            const deltaX = (t.clientX - state.startX) / (getScale ? getScale() : 1);
+            const deltaY = (t.clientY - state.startY) / (getScale ? getScale() : 1);
 
             setPreview(prev => ({
                 ...prev,
@@ -505,8 +521,8 @@ export const GraphNoteComponent: React.FC<GraphNoteProps> = ({
             if (!isLongPressRef.current && state) {
                 // Calculate final position robustly
                 const t = te.changedTouches[0];
-                const deltaX = (t.clientX - state.startX) / scale;
-                const deltaY = (t.clientY - state.startY) / scale;
+                const deltaX = (t.clientX - state.startX) / (getScale ? getScale() : 1);
+                const deltaY = (t.clientY - state.startY) / (getScale ? getScale() : 1);
                 const finalX = state.initialX + deltaX;
                 const finalY = state.initialY + deltaY;
 

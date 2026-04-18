@@ -321,8 +321,15 @@ const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, sessionId, isHead, 
         // Constrain left position so the popup doesn't overflow parent
         safeLeft = Math.max(120, Math.min(safeLeft, parentRect.width - 150));
 
+        let topPos = rect.top - parentRect.top - 48; // default to above selection
+        
+        // If the popup would hit the top of the viewport and clip, place it below the selection instead
+        if (rect.top < 60) {
+          topPos = rect.bottom - parentRect.top + 8;
+        }
+
         setSelectionRect({
-          top: Math.max(-10, rect.top - parentRect.top - 44), // prevent clipping top
+          top: topPos,
           left: safeLeft
         });
         setActiveSuggestion(null); // Clear suggestion focus
@@ -531,7 +538,8 @@ const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, sessionId, isHead, 
       {selectionRect && (
         <div
           style={{ top: selectionRect.top, left: selectionRect.left, transform: 'translateX(-50%)' }}
-          className="absolute z-50 bg-surface border border-border shadow-lg rounded-lg p-1 animate-in fade-in zoom-in duration-200 pointer-events-auto flex gap-1"
+          className="absolute z-50 bg-surface border border-border shadow-lg rounded-lg p-1 animate-in fade-in zoom-in duration-200 pointer-events-auto flex gap-1 select-none"
+          onMouseDown={(e) => e.preventDefault()} // Prevent clicking the menu from altering text selection
         >
           {activeSuggestion ? (
             <button

@@ -804,7 +804,28 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
               return prev;
             }
 
-            console.log(`[DEBUG] Frontend successfully updated state with branchLabel for node ${userMessageId}`);
+            console.log(`[DEBUG] Frontend successfully updated state with branchLabel note for node ${userMessageId}`);
+            
+            // Create a new GraphNote for the branch label
+            const newNoteId = 'note-' + uuidv4();
+            const newNote: GraphNote = {
+              id: newNoteId,
+              x: 0, // Relative to the node it's attached to
+              y: -80, // Offset above the node
+              width: Math.min(Math.max(label.length * 10, 100), 300), 
+              height: 40,
+              content: label,
+              resizeMode: 'AUTO',
+              style: {
+                color: '#ffeb3b', // Default sticky note color
+                fontSize: 'S',
+                fontFamily: 'Virgil',
+                textAlign: 'center',
+              },
+              attachedToNodeId: userMessageId,
+              createdAt: Date.now()
+            };
+
             return {
               ...prev,
               sessions: {
@@ -812,9 +833,13 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
                 [existingSessionId]: {
                   ...session,
                   updatedAt: Date.now(),
+                  notes: {
+                    ...(session.notes || {}),
+                    [newNoteId]: newNote
+                  },
                   nodes: {
                     ...session.nodes,
-                    [userMessageId]: { ...node, branchLabel: label },
+                    [userMessageId]: { ...node, branchLabel: label }, // Keeping branchLabel on node just in case
                   },
                 },
               },
@@ -1200,6 +1225,19 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
     e.stopPropagation();
     setSuggestionMenuPosition({ top: e.clientY, left: e.clientX });
     setActiveSuggestion({ text: suggestion, nodeId });
+  }, []);
+
+  // Graph interaction callbacks - stable for React.memo memoization
+  const handleGraphNodeClick = useCallback((id: string) => {
+    navigateToNode(id);
+  }, [navigateToNode]);
+
+  const handleGraphToggleFullscreen = useCallback(() => {
+    setIsGraphFullscreen(prev => !prev);
+  }, []);
+
+  const handleGraphToggleSidebar = useCallback(() => {
+    setIsSidebarOpen(prev => !prev);
   }, []);
 
   const handleDivergeSuggestion = (e: React.MouseEvent) => {
@@ -1708,15 +1746,13 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
                   nodes={currentSession.nodes}
                   rootId={currentSession.rootNodeId}
                   activeNodeId={currentSession.lastActiveNodeId}
-                  onNodeClick={(id) => {
-                    navigateToNode(id);
-                  }}
+                  onNodeClick={handleGraphNodeClick}
                   onDelete={deleteNode}
                   onUpdateNode={updateNode}
                   onResetLayout={resetLayout}
                   isFullscreen={isGraphFullscreen}
-                  onToggleFullscreen={() => setIsGraphFullscreen(!isGraphFullscreen)}
-                  onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+                  onToggleFullscreen={handleGraphToggleFullscreen}
+                  onToggleSidebar={handleGraphToggleSidebar}
                   isSidebarOpen={isSidebarOpen}
                   focusTrigger={graphFocusTrigger}
                   // Notes
