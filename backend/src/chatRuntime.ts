@@ -364,18 +364,31 @@ export const getSessionHistory = async (session: ChatSession, parentId: string |
 export const generateClarification = async (
   history: Content[],
   selectedText: string,
-  question: string
+  question: string,
+  existingThread: any | null
 ): Promise<string> => {
   const ai = getClient();
-  const sysInstruction = `You are a helpful assistant. The user is asking for clarification on a specific piece of text from the current message.
-Selected text: "${selectedText}"
-The user's question: "${question}"
-Provide a brief, concise, and helpful answer answering their doubt directly. Return ONLY your answer. Use markdown formatting.`;
+  const sysInstruction = `You are a helpful assistant answering follow-up questions or providing clarifications on a specific piece of text from a chat message. Keep your answers brief, concise, and helpful. Use markdown formatting. Return ONLY your answer.
+Context: The user previously asked about the selected text: "${selectedText}"`;
 
-  const contents = [...history, {
-    role: 'user',
-    parts: [{ text: `Regarding the text: "${selectedText}"\n\nQuestion: ${question}` }]
-  }];
+  const contents = [...history];
+
+  if (existingThread) {
+    contents.push({ role: 'user', parts: [{ text: `Regarding the text: "${selectedText}"\n\nQuestion: ${existingThread.question}` }] });
+    contents.push({ role: 'model', parts: [{ text: existingThread.answer }] });
+    if (existingThread.followUps) {
+      for (const fu of existingThread.followUps) {
+        contents.push({ role: 'user', parts: [{ text: fu.question }] });
+        contents.push({ role: 'model', parts: [{ text: fu.answer }] });
+      }
+    }
+    contents.push({ role: 'user', parts: [{ text: question }] });
+  } else {
+    contents.push({
+      role: 'user',
+      parts: [{ text: `Regarding the text: "${selectedText}"\n\nQuestion: ${question}` }]
+    });
+  }
 
   const response = await ai.models.generateContent({
     model: 'gemini-3.1-flash-lite-preview',

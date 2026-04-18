@@ -982,11 +982,11 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
     await generateFromNode(nodeToEdit.parentId, newContent, currentSession.id, isThinkingEnabled, attachments);
   };
 
-  const handleClarify = async (nodeId: string, selectedText: string, question: string) => {
+  const handleClarify = async (nodeId: string, selectedText: string, question: string, threadId?: string) => {
     const sessionId = stateRef.current.currentSessionId;
     if (!sessionId) return;
     try {
-      const response = await createClarification(sessionId, nodeId, selectedText, question);
+      const response = await createClarification(sessionId, nodeId, selectedText, question, threadId);
       setState(response.state);
     } catch (e) {
       console.error('Clarification failed', e);

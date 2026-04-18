@@ -328,10 +328,10 @@ export const registerChatRoutes = ({
     }
 
     const { sessionId, nodeId } = req.params;
-    const { selectedText, question } = req.body || {};
+    const { selectedText, question, threadId } = req.body || {};
 
-    if (!selectedText || !question) {
-      return res.status(400).json({ success: false, error: 'selectedText and question are required' });
+    if (!question) {
+      return res.status(400).json({ success: false, error: 'question is required' });
     }
 
     const userId = req.user!.id;
@@ -358,24 +358,56 @@ export const registerChatRoutes = ({
       });
 
       // 2) Generate Clarification
-      const answer = await generateClarification(history, selectedText, question);
+      // If threadId is provided, we fetch the existing clarification history and append the new question
+      let answer = '';
+      let existingClarification: any = null;
 
-      const clarification = {
-        id: randomUUID(),
-        selectedText,
-        question,
-        answer,
-        timestamp: Date.now(),
-      };
+      const stateSnapshot = await stateStore.getState(userId);
+      const node = stateSnapshot.sessions[sessionId]?.nodes[nodeId];
+
+      if (threadId) {
+        existingClarification = node?.clarifications?.find((c: any) => c.id === threadId);
+        if (!existingClarification) {
+          throw new Error('Clarification thread not found');
+        }
+        answer = await generateClarification(history, existingClarification.selectedText, question, existingClarification);
+      } else {
+        answer = await generateClarification(history, selectedText, question, null);
+      }
 
       // 3) Save clarification to the node
-      const { state } = await stateStore.updateState<{state: any}>(userId, async (state) => {
+      const { state, clarification } = await stateStore.updateState<{state: any, clarification: any}>(userId, async (state) => {
         const session = state.sessions[sessionId];
-        const node = session.nodes[nodeId];
-        node.clarifications = node.clarifications || [];
-        node.clarifications.push(clarification);
+        const targetNode = session.nodes[nodeId];
+        targetNode.clarifications = targetNode.clarifications || [];
+
+        let currentClarification;
+
+        if (threadId) {
+          currentClarification = targetNode.clarifications.find((c: any) => c.id === threadId);
+          if (currentClarification) {
+            currentClarification.followUps = currentClarification.followUps || [];
+            currentClarification.followUps.push({
+              id: randomUUID(),
+              question,
+              answer,
+              timestamp: Date.now(),
+            });
+          }
+        } else {
+          currentClarification = {
+            id: randomUUID(),
+            selectedText,
+            question,
+            answer,
+            timestamp: Date.now(),
+            followUps: []
+          };
+          targetNode.clarifications.push(currentClarification);
+        }
+
         session.updatedAt = Date.now();
-        return { state };
+        return { state, clarification: currentClarification };
       });
 
       return res.json({ success: true, data: { clarification, state } });

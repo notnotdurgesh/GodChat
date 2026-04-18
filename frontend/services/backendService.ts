@@ -209,11 +209,12 @@ export const createClarification = async (
   sessionId: string,
   nodeId: string,
   selectedText: string,
-  question: string
+  question: string,
+  threadId?: string
 ): Promise<{ clarification: import('../types').Clarification, state: ChatState }> => {
   const response = await apiFetch(`/api/chat/${sessionId}/nodes/${nodeId}/clarify`, {
     method: 'POST',
-    body: JSON.stringify({ selectedText, question }),
+    body: JSON.stringify({ selectedText, question, threadId }),
   });
   return parseResponse<{ clarification: import('../types').Clarification, state: ChatState }>(response);
 };

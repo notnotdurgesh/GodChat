@@ -12,12 +12,20 @@ export interface Attachment {
   url?: string;
 }
 
+export interface ClarificationFollowUp {
+  id: string;
+  question: string;
+  answer: string;
+  timestamp: number;
+}
+
 export interface Clarification {
   id: string;
   selectedText: string;
   question: string;
   answer: string;
   timestamp: number;
+  followUps?: ClarificationFollowUp[];
 }
 
 export interface MessageNode {

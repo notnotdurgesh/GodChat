@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { MessageNode, Role, Attachment } from '../types';
 import MarkdownRenderer, { ImageWithPreview } from './MarkdownRenderer';
-import { GitBranch, Edit2, Check, Copy, Sparkles, GitFork, BrainCircuit, ChevronDown, ChevronRight, Loader2, MessageSquarePlus, Terminal, CheckCircle2, XCircle, AlertTriangle, FileText, X, Download, ExternalLink, Paperclip } from 'lucide-react';
+import { GitBranch, Edit2, Check, Copy, Sparkles, GitFork, BrainCircuit, ChevronDown, ChevronRight, Loader2, MessageSquarePlus, Terminal, CheckCircle2, XCircle, AlertTriangle, FileText, X, Download, ExternalLink, Paperclip, HelpCircle } from 'lucide-react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus, vscLightPlus } from './MarkdownRenderer';
 import { ThemeContext } from '../contexts/ThemeContext';
@@ -91,7 +91,7 @@ interface ChatMessageProps {
   onQuote: (content: string, nodeId: string, shouldBranch?: boolean) => void;
   onEdit: (nodeId: string, newContent: string, attachments?: any[]) => void;
   onDelete?: (nodeId: string) => void;
-  onClarify?: (nodeId: string, selectedText: string, question: string) => Promise<void>;
+  onClarify?: (nodeId: string, selectedText: string, question: string, threadId?: string) => Promise<void>;
   isActivePath: boolean;
   isEditing?: boolean;
   setIsEditing?: (isEditing: boolean) => void;
@@ -190,6 +190,7 @@ const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, sessionId, isHead, 
   // Clarification State
   const [clarifyMode, setClarifyMode] = useState<{ top: number, left: number, text: string } | null>(null);
   const [clarifyQuestion, setClarifyQuestion] = useState('');
+  const [followUpQuestion, setFollowUpQuestion] = useState('');
   const [isClarifying, setIsClarifying] = useState(false);
   const [clarificationError, setClarificationError] = useState<string | null>(null);
   const [activeClarificationId, setActiveClarificationId] = useState<string | null>(null);
@@ -834,17 +835,91 @@ const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, sessionId, isHead, 
                           >
                             <X size={14} />
                           </button>
-                          <div className="flex items-start gap-2 pr-6">
-                            <div className="w-1.5 h-3 mt-1.5 bg-accent-primary rounded-full shrink-0" />
-                            <div className="flex-1 font-medium text-text-primary text-[0.95rem]">
-                              {clarification.question}
-                            </div>
-                          </div>
+                          
+                          {/* Thread Heading / Source Context */}
                           <div className="text-[0.8rem] text-text-secondary italic border-l-2 border-border pl-2 my-1 bg-black/5 dark:bg-zinc-800/50 py-2 px-3 rounded-r-md overflow-hidden" style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
                             {clarification.selectedText}
                           </div>
-                          <div className="text-[0.9rem] leading-6 text-text-primary mt-1 border-t border-border/50 pt-2">
-                             <MarkdownRenderer content={clarification.answer} />
+
+                          {/* Initial Turn */}
+                          <div className="flex flex-col gap-2 mt-3">
+                            <div className="flex items-start gap-2.5 px-3 py-2.5 bg-black/5 dark:bg-white-[0.03] rounded-xl border border-border/50 shrink-0">
+                              <HelpCircle size={16} className="text-accent-primary shrink-0 opacity-80 mt-0.5" />
+                              <div className="flex-1 font-medium text-text-primary text-[0.9rem] leading-tight">
+                                {clarification.question}
+                              </div>
+                            </div>
+                            <div className="text-[0.9rem] leading-6 text-text-primary px-1 pt-1 pb-3">
+                               <MarkdownRenderer content={clarification.answer} />
+                            </div>
+                          </div>
+
+                          {/* Follow-up Turns */}
+                          {clarification.followUps && clarification.followUps.length > 0 && (
+                            <div className="flex flex-col border-t border-border/50 pt-1 mt-1">
+                              {clarification.followUps.map(fu => (
+                                <div key={fu.id} className="flex flex-col gap-2 mt-4">
+                                  <div className="flex items-start gap-2.5 px-3 py-2.5 bg-black/5 dark:bg-white-[0.03] rounded-xl border border-border/50 shrink-0">
+                                    <HelpCircle size={16} className="text-accent-primary shrink-0 opacity-80 mt-0.5" />
+                                    <div className="flex-1 font-medium text-text-primary text-[0.9rem] leading-tight">
+                                      {fu.question}
+                                    </div>
+                                  </div>
+                                  <div className="text-[0.9rem] leading-6 text-text-primary px-1 pt-1 pb-2">
+                                    <MarkdownRenderer content={fu.answer} />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Follow-up Composer */}
+                          <div className="mt-3 border-t border-border/50 pt-3">
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="text"
+                                value={followUpQuestion}
+                                onChange={(e) => setFollowUpQuestion(e.target.value)}
+                                onKeyDown={async (e) => {
+                                  if (e.key === 'Enter' && followUpQuestion.trim() && !isClarifying) {
+                                    setIsClarifying(true);
+                                    try {
+                                      if (onClarify) {
+                                        await onClarify(node.id, clarification.selectedText, followUpQuestion.trim(), clarification.id);
+                                        setFollowUpQuestion('');
+                                      }
+                                    } catch (err) {
+                                       setClarificationError(err instanceof Error ? err.message : 'Failed');
+                                    } finally {
+                                      setIsClarifying(false);
+                                    }
+                                  }
+                                }}
+                                placeholder="Ask a follow-up..."
+                                className="flex-1 bg-background text-text-primary text-sm px-3 py-1.5 rounded-md outline-none border border-border focus:border-accent-primary transition-colors"
+                              />
+                              <button
+                                onClick={async () => {
+                                  if (followUpQuestion.trim() && !isClarifying) {
+                                    setIsClarifying(true);
+                                    try {
+                                      if (onClarify) {
+                                        await onClarify(node.id, clarification.selectedText, followUpQuestion.trim(), clarification.id);
+                                        setFollowUpQuestion('');
+                                      }
+                                    } catch (err) {
+                                       setClarificationError(err instanceof Error ? err.message : 'Failed');
+                                    } finally {
+                                      setIsClarifying(false);
+                                    }
+                                  }
+                                }}
+                                disabled={!followUpQuestion.trim() || isClarifying}
+                                className="p-1.5 bg-accent-primary hover:bg-accent-secondary disabled:opacity-50 text-white rounded-md transition-colors"
+                              >
+                                {isClarifying ? <Loader2 size={16} className="animate-spin" /> : <ChevronRight size={16} />}
+                              </button>
+                            </div>
                           </div>
                         </div>
                       </div>
