@@ -411,9 +411,6 @@ const ChatInput: React.FC<ChatInputProps> = ({
                 </div>
 
                     <div className="flex items-center justify-between mt-2 px-1 relative">
-                        {/* Placeholder spacer for center alignment */}
-                        <div className="flex-[0.5]"></div>
-
                         <div className="text-center flex-[2] z-10 pointer-events-none">
                             <span className="text-[11px] text-text-secondary opacity-60">AI can make mistakes. Check important info.</span>
                         </div>
