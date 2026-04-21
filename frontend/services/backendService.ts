@@ -80,10 +80,16 @@ interface BranchLabelEvent {
   label: string;
 }
 
+interface ToolProgressEvent {
+  tool: string;
+  message: string;
+}
+
 export interface ChatStreamHandlers {
   onTextDelta: (event: TextDeltaEvent) => void;
   onThoughtDelta: (event: ThoughtDeltaEvent) => void;
   onBranchLabel?: (event: BranchLabelEvent) => void;
+  onToolProgress?: (event: ToolProgressEvent) => void;
   onDone: (event: TerminalEvent) => void;
   onStopped: (event: TerminalEvent) => void;
   onGenerationError: (event: TerminalEvent) => void;
@@ -243,6 +249,10 @@ export const openChatStream = (streamId: string, handlers: ChatStreamHandlers): 
 
   source.addEventListener('branch-label', (event) => {
     handlers.onBranchLabel?.(JSON.parse((event as MessageEvent).data) as BranchLabelEvent);
+  });
+
+  source.addEventListener('tool-progress', (event) => {
+    handlers.onToolProgress?.(JSON.parse((event as MessageEvent).data) as ToolProgressEvent);
   });
 
   source.addEventListener('done', (event) => {

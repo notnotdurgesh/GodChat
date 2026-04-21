@@ -1,5 +1,5 @@
-import React, { useState, useRef } from 'react';
-import { Send, Quote, X, BrainCircuit, Square, FastForward, ArrowDown, Paperclip, FileText, Loader2 } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Send, Quote, X, BrainCircuit, Square, FastForward, ArrowDown, Paperclip, FileText, Loader2, ArrowUpFromLine, Edit3 } from 'lucide-react';
 import { Attachment } from '../types';
 import { AttachmentPreviewModal } from './AttachmentPreviewModal';
 
@@ -51,6 +51,11 @@ const ChatInput: React.FC<ChatInputProps> = ({
     const [isDragOver, setIsDragOver] = useState(false);
     const [uploadError, setUploadError] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // Large pasted text logic
+    const [pastedTexts, setPastedTexts] = useState<Record<string, string>>({});
+    const [editingDocId, setEditingDocId] = useState<string | null>(null);
+    const [editingDocText, setEditingDocText] = useState<string>('');
 
     // --- Drag to Scroll Hook Logic ---
     const scrollRef = useRef<HTMLDivElement>(null);
@@ -106,16 +111,67 @@ const ChatInput: React.FC<ChatInputProps> = ({
             const data = await res.json();
             if (data.success) {
                 setPendingAttachments(prev => [...prev, ...data.data]);
+                return data.data;
             } else {
                 setUploadError(data.error || 'Upload failed. Please try again.');
                 setTimeout(() => setUploadError(null), 4000);
+                return null;
             }
         } catch (err) {
             console.error('[Upload Error]', err);
             setUploadError('Upload failed. Please try again.');
             setTimeout(() => setUploadError(null), 4000);
+            return null;
         } finally {
             setIsUploading(false);
+        }
+    };
+
+    const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+        if (e.clipboardData.files.length > 0) {
+            e.preventDefault();
+            await handleUpload(e.clipboardData.files);
+            return;
+        }
+
+        const text = e.clipboardData.getData('text');
+        if (!text) return;
+
+        const wordCount = text.trim().split(/\s+/).length;
+        if (wordCount > 150) {
+            e.preventDefault();
+            const filename = `Document_Fragment_${new Date().toLocaleTimeString().replace(/:/g, '-')}.txt`;
+            const file = new File([text], filename, { type: 'text/plain' });
+            const uploadedAtts = await handleUpload([file]);
+            
+            if (uploadedAtts && uploadedAtts.length > 0) {
+                const newAtt = uploadedAtts[0];
+                setPastedTexts(prev => ({ ...prev, [newAtt.id]: text }));
+            }
+        }
+    };
+
+    const handleSaveEditedDoc = async () => {
+        if (!editingDocId) return;
+        const newText = editingDocText;
+        const filename = `Document_Fragment_${new Date().toLocaleTimeString().replace(/:/g, '-')}.txt`;
+        const updatedFile = new File([newText], filename, { type: 'text/plain' });
+        
+        setIsUploading(true);
+        // Remove the old attachment
+        setPendingAttachments(prev => prev.filter(p => p.id !== editingDocId));
+        setPastedTexts(prev => {
+            const copy = { ...prev };
+            delete copy[editingDocId];
+            return copy;
+        });
+        
+        setEditingDocId(null);
+        setEditingDocText('');
+
+        const newAtts = await handleUpload([updatedFile]);
+        if (newAtts && newAtts.length > 0) {
+            setPastedTexts(prev => ({ ...prev, [newAtts[0].id]: newText }));
         }
     };
 
@@ -269,19 +325,29 @@ const ChatInput: React.FC<ChatInputProps> = ({
                                         const isPdf = att.mimeType === 'application/pdf';
                                         const isExcel = att.mimeType?.includes('spreadsheet') || att.mimeType?.includes('excel');
                                         const isWord = att.mimeType?.includes('word') || att.mimeType?.includes('wordprocessing');
+                                        const isPasted = !!pastedTexts[att.id];
+                                        
                                         const iconBg = isPdf ? 'bg-red-500/10 text-red-500'
                                             : isExcel ? 'bg-green-500/10 text-green-600'
                                             : isWord ? 'bg-blue-500/10 text-blue-500'
                                             : isImage ? 'bg-purple-500/10 text-purple-500'
+                                            : isPasted ? 'bg-amber-500/10 text-amber-500'
                                             : 'bg-accent-primary/10 text-accent-primary';
-                                        const label = isPdf ? 'PDF' : isExcel ? 'Excel' : isWord ? 'Word' : isImage ? 'Image' : 'Doc';
+                                        const label = isPdf ? 'PDF' : isExcel ? 'Excel' : isWord ? 'Word' : isImage ? 'Image' : isPasted ? 'Pasted Text' : 'Doc';
 
                                         return (
                                             <div
                                                 key={att.id}
-                                                className="relative flex items-center gap-2 p-1.5 pr-8 bg-background border border-border rounded-xl shadow-sm text-xs animate-in zoom-in-95 duration-200 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
-                                                onClick={() => setInlinePreviewAtt(att)}
-                                                title="Click to preview"
+                                                className={`relative flex items-center gap-2 p-1.5 ${isPasted ? 'pr-16' : 'pr-8'} bg-background border border-border rounded-xl shadow-sm text-xs animate-in zoom-in-95 duration-200 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors`}
+                                                onClick={() => {
+                                                    if (isPasted) {
+                                                        setEditingDocText(pastedTexts[att.id]);
+                                                        setEditingDocId(att.id);
+                                                    } else {
+                                                        setInlinePreviewAtt(att);
+                                                    }
+                                                }}
+                                                title={isPasted ? "Click to edit text" : "Click to preview"}
                                             >
                                                 {isImage && att.url ? (
                                                     <div className="w-9 h-9 rounded-lg shrink-0 overflow-hidden border border-border/50">
@@ -294,8 +360,35 @@ const ChatInput: React.FC<ChatInputProps> = ({
                                                 )}
                                                 <div className="flex flex-col min-w-0">
                                                     <span className="truncate max-w-[120px] font-medium text-text-primary leading-tight">{att.name}</span>
-                                                    <span className="text-[10px] text-text-secondary uppercase tracking-wide">{label}</span>
+                                                    <span className="text-[10px] text-text-secondary uppercase tracking-wide flex items-center gap-1">
+                                                        {label} {isPasted && <Edit3 size={10} className="inline opacity-70" />}
+                                                    </span>
                                                 </div>
+                                                
+                                                {/* Revert to Text Button */}
+                                                {isPasted && (
+                                                    <button
+                                                        onClick={e => {
+                                                            e.stopPropagation();
+                                                            const txt = pastedTexts[att.id];
+                                                            setInput(prev => prev + (prev.trim() ? '\n\n' : '') + txt);
+                                                            setPendingAttachments(prev => prev.filter(p => p.id !== att.id));
+                                                            // adjust textarea height
+                                                            setTimeout(() => {
+                                                                const textarea = document.querySelector('textarea');
+                                                                if (textarea) {
+                                                                    textarea.style.height = 'auto';
+                                                                    textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px';
+                                                                }
+                                                            }, 0);
+                                                        }}
+                                                        className="absolute top-1 right-7 w-5 h-5 rounded-full bg-surface border border-border flex items-center justify-center text-text-secondary hover:text-amber-500 hover:border-amber-500/30 hover:bg-amber-500/10 transition-all shadow-sm"
+                                                        title="Extract back to input"
+                                                    >
+                                                        <ArrowUpFromLine size={11} strokeWidth={2.5} />
+                                                    </button>
+                                                )}
+                                                
                                                 {/* Always-visible X */}
                                                 <button
                                                     onClick={e => { e.stopPropagation(); setPendingAttachments(prev => prev.filter(p => p.id !== att.id)); }}
@@ -338,6 +431,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
                                 e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
                             }}
                             onKeyDown={handleKeyDown}
+                            onPaste={handlePaste}
                             placeholder={editingNodeId ? "Finish editing above..." : (isThinkingEnabled ? "Reason away  .  .  .  ." : (showDivergeUI ? "Branch from here..." : "Ask away  .  .  ."))}
                             className="w-full bg-transparent text-text-primary placeholder-text-secondary text-base focus:outline-none resize-none max-h-48 min-h-[44px] leading-relaxed disabled:opacity-50 disabled:cursor-not-allowed"
                             disabled={!!editingNodeId}
@@ -456,6 +550,57 @@ const ChatInput: React.FC<ChatInputProps> = ({
                     att={inlinePreviewAtt}
                     onClose={() => setInlinePreviewAtt(null)}
                 />
+            )}
+
+            {/* Edit Pasted Document Modal */}
+            {editingDocId && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
+                    <div className="bg-surface border border-border shadow-2xl rounded-2xl w-full max-w-4xl flex flex-col h-[85vh] animate-in zoom-in-95 duration-200">
+                        <div className="flex items-center justify-between p-4 border-b border-border/50 bg-background/50">
+                            <div>
+                                <h3 className="font-semibold text-text-primary text-lg flex items-center gap-2">
+                                    <FileText size={18} className="text-amber-500" />
+                                    Edit Document Fragment
+                                </h3>
+                                <p className="text-xs text-text-secondary mt-0.5">
+                                    Update the pasted context before the AI analyzes it.
+                                </p>
+                            </div>
+                            <button onClick={() => setEditingDocId(null)} className="text-text-secondary hover:text-text-primary p-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
+                                <X size={20} />
+                            </button>
+                        </div>
+                        <div className="flex-1 flex flex-col p-4 bg-background overflow-hidden relative">
+                            <textarea 
+                                className="w-full h-full bg-surface border border-border/50 rounded-xl p-5 text-text-primary focus:outline-none focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/20 resize-none font-mono text-sm leading-loose shadow-inner overflow-y-auto"
+                                value={editingDocText}
+                                onChange={(e) => setEditingDocText(e.target.value)}
+                                placeholder="Pasted content goes here..."
+                            />
+                        </div>
+                        <div className="p-4 border-t border-border/50 flex justify-between items-center bg-background/50">
+                            <div className="text-xs text-text-secondary font-medium px-3 py-1.5 rounded-lg bg-black/5 dark:bg-white/5">
+                                {editingDocText.trim().split(/\s+/).filter(x => x.length > 0).length.toLocaleString()} words
+                            </div>
+                            <div className="flex gap-3">
+                                <button 
+                                    onClick={() => setEditingDocId(null)}
+                                    className="px-5 py-2.5 rounded-xl text-sm font-semibold text-text-secondary hover:text-text-primary hover:bg-black/5 dark:hover:bg-white/5 transition-all"
+                                >
+                                    Cancel
+                                </button>
+                                <button 
+                                    onClick={handleSaveEditedDoc}
+                                    disabled={isUploading || !editingDocText.trim()}
+                                    className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-amber-500 text-white hover:bg-amber-600 shadow-sm transition-all disabled:opacity-50 flex items-center gap-2"
+                                >
+                                    {isUploading ? <Loader2 size={16} className="animate-spin"/> : <Edit3 size={16}/>}
+                                    Save Changes
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             )}
         </>
     );

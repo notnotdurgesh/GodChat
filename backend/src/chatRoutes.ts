@@ -66,6 +66,9 @@ export const registerChatRoutes = ({
               return Buffer.from(raw);
             };
 
+            // Inject the attachment ID so that tools know the right ID to ask for
+            promptParts.push({ text: `[Attachment Meta: ID="${dbAtt.id}", Name="${dbAtt.name}"]` });
+
             if (dbAtt.mimeType.startsWith('image/') && dbAtt.data) {
               const imgBuffer = normaliseToBuffer(dbAtt.data);
               // Validate: image buffer should have at least a few bytes and start with known magic bytes
@@ -116,6 +119,10 @@ export const registerChatRoutes = ({
         prompt,
         enableThinking,
         signal: abortController.signal,
+        streamManager,
+        streamId,
+        userId,
+        attachmentStore,
         onText: async (text) => {
           await stateStore.updateState(userId, (state) => {
             const session = state.sessions[sessionId];

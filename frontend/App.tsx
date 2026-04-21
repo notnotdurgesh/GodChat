@@ -808,6 +808,28 @@ const ChatApp: React.FC<ChatAppProps> = ({ currentUser, onLogout, onUserChange }
             };
           });
         },
+        onToolProgress: ({ tool, message }) => {
+          setState(prev => {
+            const session = prev.sessions[existingSessionId];
+            const node = session?.nodes?.[result.modelMessageId];
+            if (!session || !node) return prev;
+
+            return {
+              ...prev,
+              sessions: {
+                ...prev.sessions,
+                [existingSessionId]: {
+                  ...session,
+                  updatedAt: Date.now(),
+                  nodes: {
+                    ...session.nodes,
+                    [result.modelMessageId]: { ...node, thought: `${node.thought || ''}\n**⚡ [${tool}]** ${message}\n` },
+                  },
+                },
+              },
+            };
+          });
+        },
         onBranchLabel: ({ userMessageId, label }) => {
           console.log(`[DEBUG] Frontend received onBranchLabel SSE for userMessageId: ${userMessageId}, label: "${label}"`);
           setState(prev => {

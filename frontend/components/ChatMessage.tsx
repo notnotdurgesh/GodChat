@@ -6,11 +6,13 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus, vscLightPlus } from './MarkdownRenderer';
 import { ThemeContext } from '../contexts/ThemeContext';
 import AttachmentPreviewArea from './AttachmentPreviewModal';
+import { CognitiveMapView } from './CognitiveMapView';
 
 const TOOL_FRIENDLY_NAMES: Record<string, string> = {
   'get_syntax_docs': 'Reading documentation',
   'get_config_docs': 'Reading configuration',
   'render_diagram': 'Drawing diagram',
+  'generate_cognitive_map': 'Building X-Ray Map',
 };
 
 const ToolCallBlock = ({ name, args, status, errorMessage }: { name: string, args: any, status: 'running' | 'success' | 'error', errorMessage?: string }) => {
@@ -104,15 +106,26 @@ const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, sessionId, isHead, 
   const isUser = node.role === Role.USER;
 
   // Hydrate content: Decode hidden artifacts and replace references
-  const hydratedContent = React.useMemo(() => {
+  const { hydratedContent, cognitiveMaps } = React.useMemo(() => {
     let content = node.content;
     const mappings = new Map<string, string>();
+    const cogMaps = new Map<string, any>();
 
-    // Extract hidden data
-    const hiddenDataRegex = /<hidden_data key="([^"]+)" type="url">([^<]+)<\/hidden_data>/g;
+    // Extract hidden data url
+    const hiddenDataRegexUrl = /<hidden_data key="([^"]+)" type="url">([^<]+)<\/hidden_data>/g;
     let match;
-    while ((match = hiddenDataRegex.exec(content)) !== null) {
+    while ((match = hiddenDataRegexUrl.exec(content)) !== null) {
       mappings.set(match[1], match[2]);
+    }
+
+    // Extract hidden data cognitive map
+    const hiddenDataRegexCog = /<hidden_data key="([^"]+)" type="cognitive-map">([^<]+)<\/hidden_data>/g;
+    while ((match = hiddenDataRegexCog.exec(content)) !== null) {
+      try {
+        cogMaps.set(match[1], JSON.parse(match[2]));
+      } catch (e) {
+        console.error("Failed to parse cognitive map JSON", e);
+      }
     }
 
     // Remove hidden tags
@@ -169,7 +182,7 @@ const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, sessionId, isHead, 
       }).join('');
     }
 
-    return content;
+    return { hydratedContent: content, cognitiveMaps: Array.from(cogMaps.values()) };
   }, [node.content, node.clarifications]);
 
   // Local state for the content being typed, but visibility is controlled by parent prop
@@ -507,9 +520,19 @@ const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, sessionId, isHead, 
       }
     }
 
+    if (cognitiveMaps && cognitiveMaps.length > 0) {
+      cognitiveMaps.forEach((cogMap, idx) => {
+        components.push(
+          <div key={`cogmap-${idx}`} className="my-3">
+            <CognitiveMapView data={cogMap} />
+          </div>
+        );
+      });
+    }
+
     return components;
 
-  }, [hydratedContent]);
+  }, [hydratedContent, cognitiveMaps]);
 
 
 
@@ -695,15 +718,14 @@ const ChatMessagePoly: React.FC<ChatMessageProps> = ({ node, sessionId, isHead, 
                 relative text-[0.95rem] leading-7 transition-all duration-300 min-w-0 max-w-full
                 ${isUser
                 ? 'bg-black/5 dark:bg-white/10 text-text-primary px-5 py-3 rounded-3xl rounded-tr-md'
-                : 'text-text-primary px-0 py-0 bg-transparent'}
+                  : 'text-text-primary px-0 py-0 bg-transparent flex-1'}
                 ${isActivePath ? 'opacity-100' : 'opacity-60 grayscale-[0.3]'}
               `}
-          >
-
-            {isEditing ? (
-              <div className="w-full min-w-[300px] bg-surface border border-amber-500/50 rounded-xl p-3 shadow-[0_0_15px_rgba(245,158,11,0.15)] ring-1 ring-amber-500/20 animate-in fade-in zoom-in-95 duration-200">
-                {(editAttachments.length > 0 || isUploading) && (
-                  <div className="mb-3">
+            >
+              {isEditing ? (
+                <div className="flex flex-col w-full">
+                  {(editAttachments.length > 0 || isUploading) && (
+                    <div className="mb-3">
                     <div className="flex flex-wrap gap-2 p-1">
                       {editAttachments.map((att: Attachment) => {
                         const isImage = att.mimeType?.startsWith('image/');

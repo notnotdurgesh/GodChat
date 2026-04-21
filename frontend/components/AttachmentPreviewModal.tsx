@@ -10,6 +10,7 @@ import {
 // Full-screen lightbox with proper image zoom/pan/rotate, PDF iframe, and download fallback.
 const AttachmentPreviewModal = ({ att, onClose }: { att: any; onClose: () => void }) => {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  const [textContent, setTextContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const objectUrlRef = useRef<string | null>(null);
@@ -26,6 +27,7 @@ const AttachmentPreviewModal = ({ att, onClose }: { att: any; onClose: () => voi
   const isPdf = att.mimeType === 'application/pdf';
   const isExcel = att.mimeType?.includes('spreadsheet') || att.mimeType?.includes('excel');
   const isWord = att.mimeType?.includes('word') || att.mimeType?.includes('wordprocessing');
+  const isText = att.mimeType?.startsWith('text/') || att.name.endsWith('.txt') || att.name.endsWith('.csv') || att.name.endsWith('.md');
 
   // Determine the URL to fetch the attachment binary from
   const fetchUrl = att.url || `/api/attachments/${att.id}`;
@@ -39,6 +41,7 @@ const AttachmentPreviewModal = ({ att, onClose }: { att: any; onClose: () => voi
       setLoading(true);
       setError(null);
       setObjectUrl(null);
+      setTextContent(null);
       // Reset image controls
       setScale(1);
       setRotation(0);
@@ -46,12 +49,20 @@ const AttachmentPreviewModal = ({ att, onClose }: { att: any; onClose: () => voi
     });
 
     fetch(fetchUrl, { credentials: 'include' })
-      .then(r => {
+      .then(async r => {
         if (!r.ok) throw new Error(`Server returned ${r.status}: ${r.statusText}`);
+        
+        // If it's pure text, just grab the text directly
+        if (isText) {
+          const text = await r.text();
+          if (!cancelled) setTextContent(text);
+          return null; // bypass blob logic
+        }
+        
         return r.blob();
       })
       .then(blob => {
-        if (cancelled) return;
+        if (cancelled || !blob) return;
         // Force correct MIME type on the blob if we know it
         const correctedBlob = att.mimeType
           ? new Blob([blob], { type: att.mimeType })
@@ -74,7 +85,7 @@ const AttachmentPreviewModal = ({ att, onClose }: { att: any; onClose: () => voi
         objectUrlRef.current = null;
       }
     };
-  }, [att.id, fetchUrl, att.mimeType]);
+  }, [att.id, fetchUrl, att.mimeType, isText]);
 
   // Close on Escape
   useEffect(() => {
@@ -142,6 +153,7 @@ const AttachmentPreviewModal = ({ att, onClose }: { att: any; onClose: () => voi
     : isExcel ? 'Excel Spreadsheet'
     : isWord ? 'Word Document'
     : isImage ? 'Image'
+    : isText ? 'Text Document'
     : 'File';
 
   const fileIcon = isPdf
@@ -152,6 +164,8 @@ const AttachmentPreviewModal = ({ att, onClose }: { att: any; onClose: () => voi
     ? <FileText size={18} className="text-blue-400 shrink-0" />
     : isImage
     ? <FileText size={18} className="text-purple-400 shrink-0" />
+    : isText
+    ? <FileText size={18} className="text-orange-400 shrink-0" />
     : <FileText size={18} className="text-white/60 shrink-0" />;
 
   return createPortal(
@@ -183,7 +197,7 @@ const AttachmentPreviewModal = ({ att, onClose }: { att: any; onClose: () => voi
               <div className="h-4 w-px bg-white/10 mx-1" />
             </>
           )}
-          {objectUrl && (
+          {(objectUrl || textContent) && (
             <button
               onClick={handleDownload}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-all text-xs border border-white/10"
@@ -264,8 +278,17 @@ const AttachmentPreviewModal = ({ att, onClose }: { att: any; onClose: () => voi
           />
         )}
 
+        {/* ── Text Preview ── */}
+        {!loading && !error && textContent && isText && (
+          <div className="w-full h-full max-w-5xl mx-auto bg-[#1E1E1E] rounded-xl overflow-auto p-6 md:p-8 m-4 shadow-xl border border-white/10 dark:text-white text-black text-left">
+            <pre className="text-sm sm:text-base opacity-90 whitespace-pre-wrap font-mono leading-relaxed" style={{ wordBreak: 'break-word', tabSize: 4 }}>
+              {textContent}
+            </pre>
+          </div>
+        )}
+
         {/* ── Other files — download prompt ── */}
-        {!loading && !error && objectUrl && !isImage && !isPdf && (
+        {!loading && !error && objectUrl && !isImage && !isPdf && !isText && (
           <div className="flex flex-col items-center gap-5 text-center">
             <div className="w-20 h-20 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
               <FileText size={36} className="text-white/30" />

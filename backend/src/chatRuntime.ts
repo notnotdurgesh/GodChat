@@ -24,10 +24,19 @@ Your knowledge cutoff date is January 2025.
 - Do not provide raw Mermaid code when you can render it.
 </visual_capabilities>
 
+<context_processing>
+- CRITICAL: When the user provides attachments (documents, code, text, etc.), you MUST prioritize the content of those files over your own internal training data.
+- Do not make assumptions or rely on your own definitions if the files contain the necessary information.
+- Treat the provided files as the absolute source of truth for the task.
+- If asked to process, map, or summarize an attachment, read and use the exact text provided in the [Attached Document: ... | ID="..."], [Attached PDF: ... | ID="..."], or related blocks in the chat history.
+</context_processing>
+
 <operational_constraints>
 - Never output XML tags <function_call> or <function_result> to the user directly.
 - Use native tool calls only.
 - Do not display raw JSON to the user.
+- If asked to process an attachment with a tool (e.g., generate_cognitive_map), you MUST pass the exact string from the ID="..." explicitly provided in the chat history into the \`attachmentIds\` array or \`attachmentId\` property. NEVER copy-paste the entire document text into \`inlineText\`.
+- \`inlineText\` is strictly for short snippets, NOT full document contents. Large documents passed in \`inlineText\` will crash the system rate limits.
 </operational_constraints>
 
 <output_format>
@@ -79,11 +88,90 @@ const MERMAID_TOOLS: Tool[] = [
           required: ['mermaidCode'],
         },
       },
+      {
+        name: 'generate_cognitive_map',
+        description: 'Take attached Documents (PDF, DOCX, DOC, Excel, CSV, text), or inline text to build an interactive cognitive map / X-Ray schema. You can provide an array of attachmentIds, a single attachmentId, or inlineText. Providing customInstructions is highly recommended to guide the focus.',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            attachmentId: { type: Type.STRING, description: 'The ID of a single attached document.' },
+            attachmentIds: { type: Type.ARRAY, items: { type: Type.STRING }, description: 'The IDs of multiple attached documents.' },
+            inlineText: { type: Type.STRING, description: 'Raw text or data to construct the map from if there is no attachment.' },
+            customInstructions: { type: Type.STRING, description: 'Specific goals, constraints, or context to focus on.' }
+          },
+        },
+      },
     ],
   },
 ];
 
-const toolFunctions: Record<string, (args: any) => Promise<any>> = {
+import { CognitiveMapService } from './cognitiveMapService';
+
+interface ToolContext {
+  streamManager?: import('./streamManager').StreamManager;
+  streamId?: string;
+  userId?: string;
+  attachmentStore?: import('./attachmentStore').AttachmentStore;
+}
+
+const toolFunctions: Record<string, (args: any, context: ToolContext) => Promise<any>> = {
+  generate_cognitive_map: async (args: { attachmentId?: string; attachmentIds?: string[]; inlineText?: string; customInstructions?: string }, context) => {
+    if (!context.userId || !context.streamManager || !context.streamId) {
+      throw new Error('Required context missing for tool generate_cognitive_map');
+    }
+
+    let text = args.inlineText || '';
+    const ids = new Set<string>();
+    
+    if (args.attachmentIds && Array.isArray(args.attachmentIds)) {
+      args.attachmentIds.forEach(id => ids.add(id));
+    }
+    if (args.attachmentId) {
+      ids.add(args.attachmentId);
+    }
+
+    if (ids.size > 0) {
+      if (!context.attachmentStore) {
+        throw new Error('Attachment store not configured');
+      }
+      
+      let totalLength = text.length;
+      const MAX_TOTAL_LENGTH = 100000;
+
+      for (const attrId of ids) {
+        const attachment = await context.attachmentStore.getAttachment(attrId, context.userId);
+        if (attachment) {
+          const attText = attachment.extractedText || attachment.data?.toString('utf-8');
+          if (attText) {
+            // Ensure we don't go wildly over rate limits when assembling multiple documents
+            const chunk = `\n\n--- Document: ${attachment.name} ---\n${attText}`;
+            if (totalLength + chunk.length > MAX_TOTAL_LENGTH) {
+               const remaining = MAX_TOTAL_LENGTH - totalLength;
+               if (remaining > 100) {
+                 text += chunk.substring(0, remaining) + '\n...[Text Truncated from this document to preserve token limits]...';
+                 totalLength = MAX_TOTAL_LENGTH;
+               }
+            } else {
+               text += chunk;
+               totalLength += chunk.length;
+            }
+          }
+        }
+      }
+    }
+
+    if (!text.trim()) {
+      throw new Error('Must provide either attachmentId(s) or inlineText with content.');
+    }
+
+    const service = new CognitiveMapService(process.env.GEMINI_API_KEY || '');
+    const result = await service.buildCognitiveMap(text.toString(), context.streamManager, context.streamId, args.customInstructions);
+    return {
+      _isArtifact: true,
+      _isCognitiveMap: true,
+      cognitiveMap: result
+    };
+  },
   get_syntax_docs: async (args: { file: string }) => getSyntaxDocs(args.file),
   get_config_docs: async (args: { file: string }) => getConfigDocs(args.file),
   render_diagram: async (args: { mermaidCode: string; config?: Record<string, unknown> }) => {
@@ -154,6 +242,9 @@ export const buildHistory = async (
             return Buffer.from(raw);
           };
 
+          // Explicitly register attachment metadata so tools requiring attachmentId have it in context
+          parts.push({ text: `[Attachment Meta: ID="${att.id}", Name="${att.name}"]` });
+
           if (att.mimeType?.startsWith('image/') && dbAtt.data) {
             const buf = normalise(dbAtt.data);
             // Validate image magic bytes
@@ -174,12 +265,12 @@ export const buildHistory = async (
             if (buf.length > 4 && buf.slice(0, 5).toString() === '%PDF-') {
               parts.push({ inlineData: { mimeType: 'application/pdf', data: buf.toString('base64') } });
             } else if (dbAtt.extractedText) {
-              parts.push({ text: `[Attached PDF: ${att.name}]\n\n${dbAtt.extractedText}` });
+              parts.push({ text: `[Attached PDF: ${att.name} | ID="${att.id}"]\n\n${dbAtt.extractedText}` });
             }
           } else if (dbAtt.extractedText) {
-            parts.push({ text: `[Attached Document: ${att.name}]\n\n${dbAtt.extractedText}` });
+            parts.push({ text: `[Attached Document: ${att.name} | ID="${att.id}"]\n\n${dbAtt.extractedText}` });
           } else {
-            parts.push({ text: `[Attached File: ${att.name} (${att.mimeType})]` });
+            parts.push({ text: `[Attached File: ${att.name} | ID="${att.id}"] (${att.mimeType})` });
           }
         } catch (e: any) {
           console.warn(`[buildHistory] Failed to process attachment ${att.id}:`, e.message);
@@ -213,6 +304,10 @@ interface RunChatGenerationOptions {
   signal?: AbortSignal;
   onText: (text: string) => Promise<void> | void;
   onThought: (thought: string) => Promise<void> | void;
+  streamManager?: import('./streamManager').StreamManager;
+  streamId?: string;
+  userId?: string;
+  attachmentStore?: import('./attachmentStore').AttachmentStore;
 }
 
 export const runChatGeneration = async ({
@@ -223,6 +318,10 @@ export const runChatGeneration = async ({
   signal,
   onText,
   onThought,
+  streamManager,
+  streamId,
+  userId,
+  attachmentStore,
 }: RunChatGenerationOptions): Promise<{ tokenUsage?: import('./chatTypes').TokenUsage }> => {
   const ai = getClient();
 
@@ -325,8 +424,20 @@ export const runChatGeneration = async ({
 
     let toolResult: any;
     try {
-      toolResult = await toolFn(args);
-      if (toolResult?._isArtifact && toolResult.diagram?.diagramUrl && toolResult.diagram?._fullUrl) {
+      toolResult = await toolFn(args, {
+        streamManager,
+        streamId,
+        userId,
+        attachmentStore
+      });
+      if (toolResult?._isCognitiveMap) {
+        const aliasId = `xray-${Date.now()}`;
+        const hiddenDataTag = `<hidden_data key="${aliasId}" type="cognitive-map">${JSON.stringify(toolResult.cognitiveMap)}</hidden_data>`;
+        await onText(`<function_result status="success">Completed. Map: ${aliasId}</function_result>${hiddenDataTag}`);
+        
+        const { _isArtifact, _isCognitiveMap, ...cleanResult } = toolResult;
+        toolResult = cleanResult;
+      } else if (toolResult?._isArtifact && toolResult.diagram?.diagramUrl && toolResult.diagram?._fullUrl) {
         const aliasId = toolResult.diagram.diagramUrl;
         const hiddenDataTag = `<hidden_data key="${aliasId}" type="url">${toolResult.diagram._fullUrl}</hidden_data>`;
         await onText(`<function_result status="success">Completed. Reference: ${aliasId}</function_result>${hiddenDataTag}`);
